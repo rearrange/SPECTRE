@@ -1,0 +1,55 @@
+[project]
+name = "spectre"
+version = "0.1.0"
+description = "Multi-agent AI system that generates Playwright TypeScript test scripts from test case documents"
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=0.52.0",
+    "python-dotenv>=1.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm*", "agents*", "tests*"]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.3",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.9.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["llm", "agents", "agent_base", "orchestrator"]
+
+[tool.pyright]
+include = ["llm", "agents", "agent_base.py", "orchestrator.py"]
+exclude = [".venv"]
+typeCheckingMode = "standard"
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
+# json.loads returns Any by design — suppress the resulting noise
+reportAny = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
