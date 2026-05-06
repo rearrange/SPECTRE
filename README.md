@@ -1,6 +1,6 @@
 # SPECTRE
 
-**S**cript **P**roduction **E**ngine for **C**omprehensive **T**est **R**unner **E**xecution
+**S**ynthetic **P**laywright **E**ngine for **C**ontinuous **T**esting, **R**eview & **E**xecution
 
 A multi-agent AI system that converts plain-text manual test case documents into runnable Playwright TypeScript test scripts.
 
