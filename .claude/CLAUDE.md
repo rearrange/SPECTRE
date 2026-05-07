@@ -64,7 +64,7 @@ SPECTRE/
 │   └── browser_tools.py   # Async Playwright wrappers: browse_url, get_page_title,
 │                          #   get_interactive_elements, take_screenshot
 ├── agent_base.py          # Updated: run() return type widened to dict | Awaitable[dict]
-├── orchestrator.py        # Updated: async pipeline chaining Analyst → Browser
+├── orchestrator.py        # Updated: async pipeline + run_analyst/run_browser helpers + argparse CLI
 └── tests/
     ├── conftest.py        # Updated: added browser/page/browser_agent async fixtures
     └── test_browser_agent.py   # 7 contract tests for BrowserAgent
@@ -163,13 +163,27 @@ uv run playwright install chromium
 uv run pytest tests/ -v
 ```
 
-### Run the full pipeline manually
+### Run the full pipeline
 
 ```bash
 uv run python orchestrator.py path/to/test_case.txt https://target-url.example.com
 ```
 
-The orchestrator prints `{ "analyst": {...}, "browser": {...} }` JSON to stdout.
+Prints `{ "analyst": {...}, "browser": {...} }` JSON to stdout.
+
+### Run a single agent
+
+```bash
+# Analyst Agent only (no browser, no URL needed)
+uv run python orchestrator.py --analyst-only path/to/test_case.txt
+
+# Browser Agent only (no test case needed)
+uv run python orchestrator.py --browser-only https://target-url.example.com
+```
+
+Each flag is mutually exclusive. Future agents follow the same pattern: add a
+`run_<agent>()` top-level function in `orchestrator.py` and wire it to a
+`--<agent>-only` flag.
 
 ### Run linters
 

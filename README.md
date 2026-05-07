@@ -121,15 +121,7 @@ Output is JSON printed to stdout with two top-level keys:
 To extract structure from a test case without browser navigation:
 
 ```bash
-uv run python -c "
-from agents.analyst_agent import AnalystAgent
-from llm.anthropic_provider import AnthropicProvider
-import json, sys
-
-agent = AnalystAgent(AnthropicProvider())
-result = agent.run({'test_case': open(sys.argv[1]).read()})
-print(json.dumps(result, indent=2))
-" path/to/your_test_case.txt
+uv run python orchestrator.py --analyst-only path/to/your_test_case.txt
 ```
 
 ### Run the Browser Agent alone
@@ -137,23 +129,7 @@ print(json.dumps(result, indent=2))
 To inspect a URL without a test case:
 
 ```bash
-uv run python -c "
-import asyncio, json
-from playwright.async_api import async_playwright
-from agents.browser_agent import BrowserAgent
-from llm.anthropic_provider import AnthropicProvider
-
-async def main():
-    agent = BrowserAgent(AnthropicProvider())
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        result = await agent.run({'url': 'https://demo.playwright.dev/todomvc', 'page': page})
-        await browser.close()
-    print(json.dumps(result, indent=2))
-
-asyncio.run(main())
-"
+uv run python orchestrator.py --browser-only https://your-staging-url.example.com
 ```
 
 ### Run the test suite
