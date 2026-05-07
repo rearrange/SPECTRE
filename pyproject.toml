@@ -5,6 +5,7 @@ description = "Multi-agent AI system that generates Playwright TypeScript test s
 requires-python = ">=3.14"
 dependencies = [
     "anthropic>=0.52.0",
+    "playwright>=1.40.0",
     "python-dotenv>=1.0.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
@@ -16,7 +17,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["llm*", "agents*", "tests*"]
+include = ["llm*", "agents*", "tests*", "tools*"]
 
 [dependency-groups]
 dev = [
@@ -38,10 +39,10 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["llm", "agents", "agent_base", "orchestrator"]
+known-first-party = ["llm", "agents", "tools", "agent_base", "orchestrator"]
 
 [tool.pyright]
-include = ["llm", "agents", "agent_base.py", "orchestrator.py"]
+include = ["llm", "agents", "tools", "agent_base.py", "orchestrator.py"]
 exclude = [".venv"]
 typeCheckingMode = "standard"
 pythonVersion = "3.14"

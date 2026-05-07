@@ -1,5 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable
 from typing import Any
 
 from llm.base import LLMProvider
@@ -22,7 +23,7 @@ class BaseAgent(ABC):
         self._name = self.__class__.__name__
 
     @abstractmethod
-    def run(self, input: dict[str, Any]) -> dict[str, Any]:
+    def run(self, input: dict[str, Any]) -> dict[str, Any] | Awaitable[dict[str, Any]]:
         """Execute the agent with the given input and return structured output."""
         ...
 

@@ -1,6 +1,11 @@
+from collections.abc import AsyncGenerator
+
 import pytest
+import pytest_asyncio
+from playwright.async_api import Browser, Page, async_playwright
 
 from agents.analyst_agent import AnalystAgent
+from agents.browser_agent import BrowserAgent
 from llm.anthropic_provider import AnthropicProvider
 
 
@@ -124,3 +129,24 @@ Test Data:
 def analyst_agent() -> AnalystAgent:
     llm = AnthropicProvider()
     return AnalystAgent(llm)
+
+
+@pytest_asyncio.fixture
+async def browser() -> AsyncGenerator[Browser]:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        yield browser
+        await browser.close()
+
+
+@pytest_asyncio.fixture
+async def page(browser: Browser) -> AsyncGenerator[Page]:
+    page = await browser.new_page()
+    yield page
+    await page.close()
+
+
+@pytest_asyncio.fixture
+async def browser_agent() -> BrowserAgent:
+    llm = AnthropicProvider()
+    return BrowserAgent(llm)
