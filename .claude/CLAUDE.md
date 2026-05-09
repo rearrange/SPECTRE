@@ -4,8 +4,8 @@
 
 - **Name:** SPECTRE
 - **Description:** Multi-agent AI system that generates Playwright TypeScript test scripts from plain-text manual test case documents.
-- **Current phase:** Phase 2 — Complete
-- **Status:** All 14 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
+- **Current phase:** Phase 3 — Complete
+- **Status:** All 27 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
 
 ---
 
@@ -125,6 +125,109 @@ tests/test_browser_agent.py::test_browser_agent_returns_valid_json_structure PAS
 - **Failed:** 0
 
 Tests make live API calls to the Anthropic API and live browser navigations to demo.playwright.dev. Runtime is ~89 seconds due to network latency and 7 independent Chromium launches.
+
+---
+
+---
+
+## What Was Built in Phase 3
+
+### File tree (Phase 3 additions)
+
+```
+SPECTRE/
+├── agents/
+│   ├── __init__.py        # Updated: exports CoderAgent + CoderError
+│   └── coder_agent.py     # CoderAgent: takes Analyst + Browser JSON, generates Playwright TS spec
+└── tests/
+    ├── conftest.py        # Updated: all fixtures replaced with TodoMVC-based scenarios + hardcoded JSON fixtures
+    ├── test_analyst_agent.py  # Updated: fixture names changed to *_add_todo / *_complete_todo
+    └── test_coder_agent.py    # 13 contract tests (11 Tier 1 unit + 2 Tier 2 e2e)
+```
+
+### Deviations from Phase 3 spec
+
+| Item | Detail |
+|------|--------|
+| All unit test fixtures replaced with TodoMVC scenarios | `sample_test_case_login` and `sample_test_case_search` removed. Replaced with `sample_test_case_add_todo` (TC-001) and `sample_test_case_complete_todo` (TC-002). The application under test for all SPECTRE unit tests is `https://demo.playwright.dev/todomvc`. This decision was made in Phase 3 to ensure test fixtures reflect a real QA tester using SPECTRE against a real application. |
+| `e2e` pytest marker added | `pyproject.toml` `[tool.pytest.ini_options]` now declares the `e2e` marker to avoid `PytestUnknownMarkWarning`. |
+| Session-scoped e2e fixtures use `asyncio.run()` | The spec implied session-scoped async fixtures. On Linux with pytest-asyncio 1.3.0 function-scoped event loops, session-scoped async fixtures deadlock identically to the Windows issue documented in Phase 2. The e2e fixtures are synchronous and use `asyncio.run()` internally to drive the browser agent. |
+| Local imports inside e2e fixtures | Imports for `AnalystAgent`, `BrowserAgent`, `CoderAgent`, `AnthropicProvider`, and `async_playwright` are deferred inside the fixture functions to avoid import-time side effects. Ruff isort requires stdlib (`asyncio`) separated from third-party (`playwright`) and first-party (`agents`, `llm`) blocks by a blank line — applied. |
+
+### Python version and package manager
+
+- **Python:** 3.14.4
+- **Package manager:** uv (Linux)
+
+---
+
+## Test Results
+
+### Phase 3 final pytest run (verbatim terminal output)
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0 -- /home/rearrange/Codes/GitLab/spectre/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/rearrange/Codes/GitLab/spectre
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 27 items
+
+tests/test_analyst_agent.py::test_analyst_extracts_title PASSED          [  3%]
+tests/test_analyst_agent.py::test_analyst_extracts_steps PASSED          [  7%]
+tests/test_analyst_agent.py::test_analyst_steps_have_required_fields PASSED [ 11%]
+tests/test_analyst_agent.py::test_analyst_extracts_preconditions PASSED  [ 14%]
+tests/test_analyst_agent.py::test_analyst_extracts_assertions PASSED     [ 18%]
+tests/test_analyst_agent.py::test_analyst_returns_valid_json_structure PASSED [ 22%]
+tests/test_analyst_agent.py::test_analyst_handles_search_test_case PASSED [ 25%]
+tests/test_browser_agent.py::test_browser_agent_returns_url PASSED       [ 29%]
+tests/test_browser_agent.py::test_browser_agent_returns_page_title PASSED [ 33%]
+tests/test_browser_agent.py::test_browser_agent_returns_interactive_elements PASSED [ 37%]
+tests/test_browser_agent.py::test_browser_agent_interactive_elements_have_required_fields PASSED [ 40%]
+tests/test_browser_agent.py::test_browser_agent_returns_navigation PASSED [ 44%]
+tests/test_browser_agent.py::test_browser_agent_returns_page_structure PASSED [ 48%]
+tests/test_browser_agent.py::test_browser_agent_returns_valid_json_structure PASSED [ 51%]
+tests/test_coder_agent.py::test_coder_returns_script_key PASSED          [ 55%]
+tests/test_coder_agent.py::test_coder_script_has_playwright_import PASSED [ 59%]
+tests/test_coder_agent.py::test_coder_script_has_test_block PASSED       [ 62%]
+tests/test_coder_agent.py::test_coder_script_has_describe_block PASSED   [ 66%]
+tests/test_coder_agent.py::test_coder_script_has_expect PASSED           [ 70%]
+tests/test_coder_agent.py::test_coder_script_references_app_url PASSED   [ 74%]
+tests/test_coder_agent.py::test_coder_script_has_goto PASSED             [ 77%]
+tests/test_coder_agent.py::test_coder_script_no_positional_selectors PASSED [ 81%]
+tests/test_coder_agent.py::test_coder_script_has_aaa_comments PASSED     [ 85%]
+tests/test_coder_agent.py::test_coder_script_covers_all_steps PASSED     [ 88%]
+tests/test_coder_agent.py::test_coder_handles_complete_todo_input PASSED [ 92%]
+tests/test_coder_agent.py::test_e2e_coder_add_todo_produces_script PASSED [ 96%]
+tests/test_coder_agent.py::test_e2e_coder_complete_todo_produces_script PASSED [100%]
+
+======================== 27 passed in 172.30s (0:02:52) ========================
+```
+
+- **Total:** 27
+- **Passed:** 27
+- **Failed:** 0
+
+Tier 1 unit tests (11) use hardcoded fixtures — no API calls, no browser. Runtime ~63s due to 11 LLM calls sharing the same session fixtures.
+Tier 2 e2e tests (2) use the full Analyst → Browser → Coder chain with live API and Playwright. Runtime ~37s (both TC-001 and TC-002 chains).
+
+---
+
+## Key Implementation Decisions (Phase 3)
+
+### Session-scoped e2e fixtures use `asyncio.run()` instead of async fixtures
+
+The spec suggested session-scoped async fixtures. The Phase 2 deviation notes document that session-scoped async fixtures deadlock with pytest-asyncio 1.3.0 on both Windows and Linux when combined with function-scoped test event loops. To avoid the deadlock, the e2e fixtures (`e2e_coder_output_add_todo`, `e2e_coder_output_complete_todo`) are declared as synchronous functions that call `asyncio.run()` internally to drive the `BrowserAgent.run()` coroutine. This is safe because these fixtures are only called once per session and there is no outer event loop running at fixture setup time.
+
+### Tier 1 tests run 11 independent LLM calls
+
+Each of the 11 Tier 1 tests calls `coder_agent.run()` independently (the `coder_agent` fixture is function-scoped). This means 11 separate Anthropic API calls are made — one per test. This was intentional: each test must be independently verifiable. The runtime (~63 seconds) is acceptable for a development-phase unit test suite. If cost becomes a concern, a session-scoped `coder_output_add_todo` fixture could be introduced to share the result across the 10 TC-001 tests, reducing API calls to 2 total.
+
+### `CoderError` for empty LLM responses
+
+Following the `AnalystParseError` / `BrowserParseError` pattern, `CoderError` is raised when the LLM returns an empty string. JSON parsing is not needed here — the output is TypeScript source, not JSON. The only validation is non-emptiness.
 
 ---
 

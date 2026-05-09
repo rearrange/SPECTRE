@@ -30,6 +30,7 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = ["e2e: end-to-end tests that make live API and browser calls (deselect with '-m not e2e')"]
 
 [tool.ruff]
 line-length = 100
