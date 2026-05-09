@@ -2,78 +2,82 @@
 
 **S**ynthetic **P**laywright **E**ngine for **C**ontinuous **T**esting, **R**eview & **E**xecution
 
-A multi-agent AI system that converts plain-text manual test case documents into runnable Playwright TypeScript test scripts.
+> *A ghost that haunts your app — so your team doesn't have to.*
+
+SPECTRE is a multi-agent AI system that converts plain-text manual test case documents into
+runnable Playwright TypeScript test scripts. You write the test case in plain English. SPECTRE
+reads it, browses your app, and generates the automation code.
+
+**Status:** Active development — Phase 3 of 9 complete.
 
 ---
 
 ## How it works
 
-SPECTRE chains a series of specialised AI agents, each responsible for one step of the transformation pipeline:
+SPECTRE chains a series of specialised AI agents, each responsible for one step:
 
 ```
-Plain-text test case
-        │
-        ▼
-┌───────────────┐
-│ Analyst Agent │  Extracts structure from the raw document
-│               │  → title, steps, assertions, test data
-└───────┬───────┘
-        │  (structured JSON)
-        ▼
-┌───────────────┐
-│ Browser Agent │  Navigates the target URL with Playwright
-│               │  → interactive elements, navigation, page structure
-└───────┬───────┘
-        │  (page observations JSON)
-        ▼
-   [ Phase 3+ ]
-   Writer Agent  →  Playwright TS script
-   Reviewer Agent → quality gate
-   Output
+Plain-text test case + App URL
+           │
+           ▼
+   ┌───────────────┐
+   │ Analyst Agent │  Reads the test case document
+   │               │  → extracts title, steps, assertions, test data
+   └───────┬───────┘
+           │ structured JSON
+           ▼
+   ┌───────────────┐
+   │ Browser Agent │  Navigates the app URL with a real headless browser
+   │               │  → observes interactive elements, forms, navigation
+   └───────┬───────┘
+           │ UI observation JSON
+           ▼
+   ┌───────────────┐
+   │  Coder Agent  │  Combines test plan + UI observations
+   │               │  → generates a complete Playwright TypeScript .spec.ts
+   └───────┬───────┘
+           │ .spec.ts string
+           ▼
+     [ Phases 4–9 ]
+     Reviewer, Git, Web UI
 ```
 
-**Phase 1 (complete):** The Analyst Agent reads a test case document and returns a structured JSON object.
-
-**Phase 2 (complete):** The Browser Agent navigates the target URL headlessly, observes the page with Playwright, and returns a structured description of the UI (interactive elements, navigation, page structure).
+The generated script follows Playwright best practices: role-based selectors, AAA structure
+(Arrange / Act / Assert), and descriptive test names.
 
 ---
 
 ## Requirements
 
 - Python 3.14+
-- [uv](https://docs.astral.sh/uv/) (package manager)
-- An Anthropic API key
+- [uv](https://docs.astral.sh/uv/)
+- An Anthropic API key (`ANTHROPIC_API_KEY`)
 
 ---
 
 ## Setup
 
-**1. Clone the repository**
+**1. Clone and install dependencies**
 
 ```bash
 git clone <repo-url>
 cd SPECTRE
-```
-
-**2. Install dependencies**
-
-```bash
 uv sync
 ```
 
-**3. Install the Chromium browser binary**
+**2. Install the Playwright browser**
 
 ```bash
 uv run playwright install chromium
 ```
 
-**4. Configure your API key**
+**3. Configure your API key**
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and set your key:
+Open `.env` and fill in your key:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
@@ -81,70 +85,34 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ---
 
-## Usage
+## Running the pipeline
 
-### Run the full pipeline (Analyst → Browser)
-
-Provide a plain-text test case file and the URL of the page to analyse:
-
-```bash
-uv run python orchestrator.py path/to/your_test_case.txt https://your-staging-url.example.com
-```
-
-Output is JSON printed to stdout with two top-level keys:
-
-```json
-{
-  "analyst": {
-    "title": "TC-001 — User Login",
-    "preconditions": ["..."],
-    "steps": [{ "step_number": 1, "action": "...", "expected_result": "..." }],
-    "assertions": ["..."],
-    "test_data": {}
-  },
-  "browser": {
-    "url": "https://your-staging-url.example.com",
-    "page_title": "My App",
-    "interactive_elements": [
-      { "type": "input", "label": "Email", "selector": "#email", "placeholder": "Enter email" }
-    ],
-    "forms": [],
-    "navigation": { "links": ["/about", "/login"], "current_path": "/" },
-    "page_structure": "A login page with email and password fields...",
-    "raw_observations": "..."
-  }
-}
-```
-
-### Run the Analyst Agent alone
-
-To extract structure from a test case without browser navigation:
+SPECTRE currently runs from the command line. Provide a plain-text test case file and a
+target URL:
 
 ```bash
-uv run python orchestrator.py --analyst-only path/to/your_test_case.txt
+uv run python orchestrator.py path/to/test_case.txt https://your-staging-url.example.com
 ```
 
-### Run the Browser Agent alone
+The pipeline runs all three agents in sequence and prints the output as JSON to stdout.
+The generated TypeScript script is included in the `coder` key of the output.
 
-To inspect a URL without a test case:
+### Running a single agent
+
+You can run individual agents in isolation for debugging or exploration:
 
 ```bash
+# Analyst only — extracts structure from a test case file, no browser needed
+uv run python orchestrator.py --analyst-only path/to/test_case.txt
+
+# Browser only — observes a URL, no test case needed
 uv run python orchestrator.py --browser-only https://your-staging-url.example.com
 ```
 
-### Run the test suite
+### Test case format
 
-```bash
-uv run pytest tests/ -v
-```
-
-Tests make live calls to the Anthropic API and navigate real URLs with Playwright. Expect ~90 seconds for the full suite (14 tests).
-
----
-
-## Test case format
-
-SPECTRE accepts any plain-text layout. The Analyst Agent uses an LLM to extract structure, so rigid formatting is not required. A recommended layout:
+SPECTRE accepts any plain-text layout — the Analyst Agent uses an LLM to extract structure,
+so rigid formatting is not required. A recommended layout:
 
 ```
 TEST CASE: TC-001 — Feature Name
@@ -170,54 +138,65 @@ Test Data:
 
 ---
 
-## Project structure
+## Running the tests
 
+SPECTRE has a pytest test suite that verifies each agent's behaviour. Tests are split by tier:
+
+### Full suite (all agents, all tiers)
+
+Takes ~3 minutes. Makes live API calls and launches a real browser.
+
+```bash
+uv run pytest tests/ -v
 ```
-SPECTRE/
-├── agent_base.py          # Abstract BaseAgent with ReAct loop skeleton
-├── orchestrator.py        # Chains agents into a pipeline; CLI entry point
-├── agents/
-│   ├── analyst_agent.py   # Analyst: plain text → structured JSON
-│   └── browser_agent.py   # Browser: URL → page observations JSON
-├── llm/
-│   ├── base.py            # LLMProvider ABC and LLMResponse dataclass
-│   ├── anthropic_provider.py
-│   └── openai_provider.py # Stub — not yet implemented
-├── tools/
-│   └── browser_tools.py   # Async Playwright wrappers (browse_url, get_interactive_elements, …)
-├── tests/
-│   ├── conftest.py
-│   ├── test_analyst_agent.py
-│   └── test_browser_agent.py
-├── output/                # Generated scripts written here (gitignored)
-├── .claude/
-│   └── CLAUDE.md          # Project context for Claude Code sessions
-├── .env.example
-└── pyproject.toml
+
+### Per-agent tests
+
+```bash
+uv run pytest tests/test_analyst_agent.py -v
+uv run pytest tests/test_browser_agent.py -v
+uv run pytest tests/test_coder_agent.py -v
+```
+
+### Coder Agent — Tier 1 only (fast, no browser)
+
+Tier 1 tests use hardcoded fixtures. No browser is launched, but LLM calls are still made.
+Run these during active development to keep feedback loops short.
+
+```bash
+uv run pytest tests/test_coder_agent.py -v -m "not e2e"
+```
+
+### Coder Agent — Tier 2 e2e only
+
+Runs the full Analyst → Browser → Coder chain with a live browser. Slow and expensive —
+run once per session at most.
+
+```bash
+uv run pytest tests/test_coder_agent.py -v -m e2e
 ```
 
 ---
 
-## Development
+## Project structure
 
-### Linting and formatting
-
-```bash
-uv run ruff check .          # lint
-uv run ruff format .         # format
 ```
-
-### Type checking
-
-```bash
-uv run basedpyright llm/ agents/ tools/ agent_base.py orchestrator.py
+SPECTRE/
+├── agent_base.py              # Abstract base class for all agents (ReAct loop skeleton)
+├── orchestrator.py            # Pipeline wiring + CLI entry point
+├── agents/
+│   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
+│   ├── browser_agent.py       # Navigates a URL, returns UI observation JSON
+│   └── coder_agent.py         # Generates Playwright TypeScript .spec.ts
+├── llm/
+│   ├── base.py                # LLMProvider ABC + LLMResponse dataclass
+│   ├── anthropic_provider.py  # Default provider (Claude)
+│   └── openai_provider.py     # Drop-in swap (not yet implemented)
+├── tools/
+│   └── browser_tools.py       # Async Playwright wrappers used by BrowserAgent
+├── tests/                     # pytest suite — one file per agent
+└── output/                    # Generated scripts land here (gitignored)
 ```
-
-Both must be clean before committing.
-
-### Debug screenshots
-
-Set `DEBUG_SCREENSHOTS=true` in `.env` to save a screenshot of each navigated page to `output/screenshots/`.
 
 ---
 
@@ -226,16 +205,24 @@ Set `DEBUG_SCREENSHOTS=true` in `.env` to save a screenshot of each navigated pa
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 1 | ✅ Complete | Analyst Agent — extracts test case structure as JSON |
-| 2 | ✅ Complete | Browser Agent — navigates target URL, returns page observations |
-| 3 | Planned | Writer Agent — generates a Playwright TypeScript test script |
-| 4 | Planned | Reviewer Agent — validates the generated script |
-| 5 | Planned | End-to-end pipeline with file output to `output/` |
+| 2 | ✅ Complete | Browser Agent — observes the app with a real headless browser |
+| 3 | ✅ Complete | Coder Agent — generates Playwright TypeScript .spec.ts |
+| 4 | 🔜 Next | Orchestrator — wires all agents into a single pipeline with file output |
+| 5 | Planned | Reviewer Agent — validates the generated script, triggers retry loop |
+| 6 | Planned | Repo Reader + Scaffold — matches existing repo conventions or scaffolds a new project |
+| 7 | Planned | Git Agent — branch, commit, push, open MR/PR |
+| 8 | Planned | FastAPI + Web UI — tester-facing interface |
+| 9 | Planned | Polish + CTO demo |
 
 ---
 
-## Supported LLM providers
+## LLM provider
 
-| Provider | Status |
-|----------|--------|
-| Anthropic (Claude) | Supported |
-| OpenAI | Stub — not yet implemented |
+SPECTRE uses Anthropic Claude by default. Swapping to OpenAI requires changing one line:
+
+```python
+# In any agent or orchestrator file
+llm = AnthropicProvider()   # → OpenAIProvider()
+```
+
+The `OpenAIProvider` stub is in place — implementation is deferred until needed.

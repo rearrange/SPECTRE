@@ -7,6 +7,40 @@
 - **Current phase:** Phase 3 — Complete
 - **Status:** All 27 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
 
+## Current File Tree
+
+```
+SPECTRE/
+├── .env.example
+├── .gitattributes
+├── .gitignore
+├── agent_base.py              # Abstract BaseAgent with ReAct loop skeleton
+├── orchestrator.py            # Pipeline wiring + argparse CLI
+├── pyproject.toml
+├── uv.lock
+├── agents/
+│   ├── __init__.py            # Exports: AnalystAgent, BrowserAgent, CoderAgent + their errors
+│   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
+│   ├── browser_agent.py       # Navigates URL with Playwright, returns UI observation JSON
+│   └── coder_agent.py         # Takes Analyst + Browser JSON, generates Playwright TS .spec.ts
+├── llm/
+│   ├── __init__.py
+│   ├── base.py                # LLMProvider ABC + LLMResponse dataclass
+│   ├── anthropic_provider.py  # Live Anthropic (Claude) provider
+│   └── openai_provider.py     # OpenAI stub (NotImplementedError)
+├── tools/
+│   ├── __init__.py
+│   └── browser_tools.py       # Async Playwright wrappers: browse_url, get_page_content, etc.
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py            # Shared fixtures: TodoMVC test cases, hardcoded JSON, agents
+│   ├── test_analyst_agent.py  # 7 tests — AnalystAgent contract
+│   ├── test_browser_agent.py  # 7 tests — BrowserAgent contract
+│   └── test_coder_agent.py    # 13 tests — CoderAgent contract (11 Tier 1 + 2 Tier 2 e2e)
+└── output/
+    └── .gitkeep               # Tracks gitignored output directory
+```
+
 ---
 
 ## Phase 1 — AnalystAgent
