@@ -8,7 +8,7 @@ SPECTRE is a multi-agent AI system that converts plain-text manual test case doc
 runnable Playwright TypeScript test scripts. You write the test case in plain English. SPECTRE
 reads it, browses your app, and generates the automation code.
 
-**Status:** Active development — Phase 3 of 9 complete.
+**Status:** Active development — Phase 4 of 9 complete.
 
 ---
 
@@ -38,7 +38,7 @@ Plain-text test case + App URL
    └───────┬───────┘
            │ .spec.ts string
            ▼
-     [ Phases 4–9 ]
+     [ Phases 5–9 ]
      Reviewer, Git, Web UI
 ```
 
@@ -87,27 +87,25 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ## Running the pipeline
 
-SPECTRE currently runs from the command line. Provide a plain-text test case file and a
-target URL:
+**Flow B — new project (no existing repo):**
 
 ```bash
-uv run python orchestrator.py path/to/test_case.txt https://your-staging-url.example.com
+uv run python orchestrator.py path/to/test_case.txt https://demo.playwright.dev/todomvc
 ```
 
-The pipeline runs all three agents in sequence and prints the output as JSON to stdout.
-The generated TypeScript script is included in the `coder` key of the output.
-
-### Running a single agent
-
-You can run individual agents in isolation for debugging or exploration:
+**Flow A — existing repo:**
 
 ```bash
-# Analyst only — extracts structure from a test case file, no browser needed
-uv run python orchestrator.py --analyst-only path/to/test_case.txt
-
-# Browser only — observes a URL, no test case needed
-uv run python orchestrator.py --browser-only https://your-staging-url.example.com
+uv run python orchestrator.py path/to/test_case.txt https://staging.example.com https://gitlab.example.com/your/repo
 ```
+
+**What it does (in order):**
+
+1. Analyst Agent reads the test case and extracts structured JSON
+2. Browser Agent navigates the staging URL with headless Chromium and observes the UI
+3. Coder Agent generates a Playwright TypeScript `.spec.ts` file from both outputs
+
+**Output:** Full result JSON printed to stdout, followed by the generated `.spec.ts` content.
 
 ### Test case format
 
@@ -144,10 +142,18 @@ SPECTRE has a pytest test suite that verifies each agent's behaviour. Tests are 
 
 ### Full suite (all agents, all tiers)
 
-Takes ~3 minutes. Makes live API calls and launches a real browser.
+Takes ~3–4 minutes. Makes live API calls and launches a real browser.
 
 ```bash
 uv run pytest tests/ -v
+```
+
+### Fast suite — Tier 1 only (no e2e)
+
+All tests with hardcoded fixtures. LLM calls are still made for agent unit tests.
+
+```bash
+uv run pytest tests/ -v -m "not e2e"
 ```
 
 ### Per-agent tests
@@ -156,24 +162,15 @@ uv run pytest tests/ -v
 uv run pytest tests/test_analyst_agent.py -v
 uv run pytest tests/test_browser_agent.py -v
 uv run pytest tests/test_coder_agent.py -v
+uv run pytest tests/test_orchestrator.py -v
 ```
 
-### Coder Agent — Tier 1 only (fast, no browser)
+### Orchestrator — Tier 2 e2e only
 
-Tier 1 tests use hardcoded fixtures. No browser is launched, but LLM calls are still made.
-Run these during active development to keep feedback loops short.
-
-```bash
-uv run pytest tests/test_coder_agent.py -v -m "not e2e"
-```
-
-### Coder Agent — Tier 2 e2e only
-
-Runs the full Analyst → Browser → Coder chain with a live browser. Slow and expensive —
-run once per session at most.
+Runs the full pipeline (Flow A and Flow B) with live API and Playwright against TodoMVC.
 
 ```bash
-uv run pytest tests/test_coder_agent.py -v -m e2e
+uv run pytest tests/test_orchestrator.py -v -m e2e
 ```
 
 ---
@@ -183,18 +180,22 @@ uv run pytest tests/test_coder_agent.py -v -m e2e
 ```
 SPECTRE/
 ├── agent_base.py              # Abstract base class for all agents (ReAct loop skeleton)
-├── orchestrator.py            # Pipeline wiring + CLI entry point
+├── orchestrator.py            # Orchestrator class + flow routing + CLI entry point
 ├── agents/
 │   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
 │   ├── browser_agent.py       # Navigates a URL, returns UI observation JSON
-│   └── coder_agent.py         # Generates Playwright TypeScript .spec.ts
+│   ├── coder_agent.py         # Generates Playwright TypeScript .spec.ts
+│   ├── reviewer_agent.py      # Stub — Phase 5
+│   ├── repo_reader_agent.py   # Stub — Phase 6
+│   ├── scaffold_agent.py      # Stub — Phase 6
+│   └── git_agent.py           # Stub — Phase 7
 ├── llm/
 │   ├── base.py                # LLMProvider ABC + LLMResponse dataclass
 │   ├── anthropic_provider.py  # Default provider (Claude)
 │   └── openai_provider.py     # Drop-in swap (not yet implemented)
 ├── tools/
 │   └── browser_tools.py       # Async Playwright wrappers used by BrowserAgent
-├── tests/                     # pytest suite — one file per agent
+├── tests/                     # pytest suite — one file per agent + orchestrator
 └── output/                    # Generated scripts land here (gitignored)
 ```
 
@@ -205,13 +206,13 @@ SPECTRE/
 | Phase | Status | Description |
 |-------|--------|-------------|
 | 1 | ✅ Complete | Analyst Agent — extracts test case structure as JSON |
-| 2 | ✅ Complete | Browser Agent — observes the app with a real headless browser |
-| 3 | ✅ Complete | Coder Agent — generates Playwright TypeScript .spec.ts |
-| 4 | 🔜 Next | Orchestrator — wires all agents into a single pipeline with file output |
-| 5 | Planned | Reviewer Agent — validates the generated script, triggers retry loop |
-| 6 | Planned | Repo Reader + Scaffold — matches existing repo conventions or scaffolds a new project |
-| 7 | Planned | Git Agent — branch, commit, push, open MR/PR |
-| 8 | Planned | FastAPI + Web UI — tester-facing interface |
+| 2 | ✅ Complete | Browser Agent — headless Chromium UI observation |
+| 3 | ✅ Complete | Coder Agent — generates Playwright TypeScript `.spec.ts` |
+| 4 | ✅ Complete | Orchestrator — wires full pipeline with flow routing and retry hook |
+| 5 | Planned | Reviewer Agent + retry loop |
+| 6 | Planned | Repo Reader Agent + Scaffold Agent |
+| 7 | Planned | Git Agent — branch, commit, push, MR/PR |
+| 8 | Planned | FastAPI backend + Web UI |
 | 9 | Planned | Polish + CTO demo |
 
 ---
