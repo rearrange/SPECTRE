@@ -4,8 +4,8 @@
 
 - **Name:** SPECTRE
 - **Description:** Multi-agent AI system that generates Playwright TypeScript test scripts from plain-text manual test case documents.
-- **Current phase:** Phase 5 — Complete
-- **Status:** All 53 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
+- **Current phase:** Phase 6 — Complete
+- **Status:** All 84 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
 
 ## Current File Tree
 
@@ -15,17 +15,18 @@ SPECTRE/
 ├── .gitattributes
 ├── .gitignore
 ├── agent_base.py              # Abstract BaseAgent with ReAct loop skeleton
-├── orchestrator.py            # Orchestrator class + flow routing + retry loop + CLI entry point
+├── errors.py                  # Shared exception types: RepoReaderError, ScaffoldError
+├── orchestrator.py            # Orchestrator class + Flow A/B routing + retry loop + CLI entry point
 ├── pyproject.toml
 ├── uv.lock
 ├── agents/
-│   ├── __init__.py            # Exports all agents + their errors
+│   ├── __init__.py            # Exports all agents + their errors (incl. RepoReaderError, ScaffoldError)
 │   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
 │   ├── browser_agent.py       # Navigates URL with Playwright, returns UI observation JSON
 │   ├── coder_agent.py         # Takes Analyst + Browser JSON, generates Playwright TS .spec.ts; accepts optional reviewer_feedback
 │   ├── reviewer_agent.py      # LLM-based reviewer: checks syntax, coverage, best practices; raises ReviewerError
-│   ├── repo_reader_agent.py   # Stub — returns placeholder dict; to be implemented in Phase 6
-│   ├── scaffold_agent.py      # Stub — returns placeholder dict; to be implemented in Phase 6
+│   ├── repo_reader_agent.py   # Clones Git repo, extracts folder tree + test patterns + config; one LLM call for Cypress notes
+│   ├── scaffold_agent.py      # Generates opinionated PW TS project on disk; no LLM calls; raises ScaffoldError if exists
 │   └── git_agent.py           # Stub — returns placeholder dict; to be implemented in Phase 7
 ├── llm/
 │   ├── __init__.py
@@ -42,9 +43,13 @@ SPECTRE/
 │   ├── test_browser_agent.py  # 7 tests — BrowserAgent contract
 │   ├── test_coder_agent.py    # 13 tests — CoderAgent contract (11 Tier 1 + 2 Tier 2 e2e)
 │   ├── test_reviewer_agent.py # 10 tests — ReviewerAgent contract (8 Tier 1 + 2 Tier 2 e2e)
-│   └── test_orchestrator.py   # 16 tests — Orchestrator contract (13 Tier 1 + 3 Tier 2 e2e)
+│   ├── test_repo_reader_agent.py  # 15 tests — RepoReaderAgent contract (all Tier 1, real git)
+│   ├── test_scaffold_agent.py     # 14 tests — ScaffoldAgent contract (all Tier 1)
+│   └── test_orchestrator.py   # 18 tests — Orchestrator contract (15 Tier 1 + 3 Tier 2 e2e)
 └── output/
-    └── .gitkeep               # Tracks gitignored output directory
+    ├── .gitkeep               # Tracks gitignored output directory
+    ├── cloned_repos/          # Persisted repo clones (created by RepoReaderAgent, gitignored)
+    └── scaffolded/            # Scaffolded projects (created by ScaffoldAgent, gitignored)
 ```
 
 ---
@@ -160,20 +165,82 @@ Replaces the `ReviewerAgent` stub with a real LLM-based reviewer. Wires the Orch
 
 ---
 
+## Phase 6 — RepoReaderAgent + ScaffoldAgent
+
+Replaces both Phase 4 stubs with real implementations. Wires `repo_context` from RepoReaderAgent into the Analyst prompt (Flow A). Orchestrator result dict now includes `repo_context` and `scaffold_result` fields.
+
+### What changed
+
+- **`errors.py`** (new) — `RepoReaderError` and `ScaffoldError` exception types.
+- **`agents/repo_reader_agent.py`** — full implementation. Clones via `gitpython` into `output/cloned_repos/{name}/`. Extracts: folder tree (depth 4), naming conventions, test patterns (≤3 files × 50 lines), playwright/tsconfig/package.json, helper utilities, Cypress detection. One LLM call only for `cypress_to_playwright_notes`. Idempotent — skips re-clone if directory exists. Raises `RepoReaderError` on git failure.
+- **`agents/scaffold_agent.py`** — full implementation. Generates 11-file opinionated PW TS scaffold under `output/scaffolded/{name}/`. No LLM calls. Raises `ScaffoldError` if project directory already exists.
+- **`orchestrator.py`** — Flow A now calls real `RepoReaderAgent` and passes `repo_context` to `AnalystAgent`. Flow B now calls real `ScaffoldAgent` with optional `project_name` from input dict. Result dict includes `repo_context` and `scaffold_result` (both `None` if not applicable).
+- **`agents/__init__.py`** — exports `RepoReaderError`, `ScaffoldError`.
+- **`tests/test_repo_reader_agent.py`** (new) — 15 Tier 1 tests. Uses real `gitpython` repos in `tmp_path`; only LLM call is mocked.
+- **`tests/test_scaffold_agent.py`** (new) — 14 Tier 1 tests. All output redirected to `tmp_path` via `agent._output_base`.
+- **`tests/test_orchestrator.py`** — updated: `test_repo_reader_stub_returns_dict` and `test_scaffold_stub_returns_dict` replaced with real-implementation tests using `tmp_path`; `_make_orchestrator_with_stubs` now also mocks `_repo_reader.run` and `_scaffold.run`; e2e Flow A test mocks `_repo_reader.run` to avoid real network clone; 2 new Tier 1 integration tests added.
+- **`pyproject.toml`** — `gitpython` added as a dependency.
+
+### New agent: RepoReaderAgent
+
+| Field | Source |
+|---|---|
+| `folder_structure` | `pathlib` traversal, depth ≤ 4, excludes `.git`, `node_modules`, `.venv` |
+| `naming_conventions` | Counter-based suffix/pattern detection over all test files |
+| `test_patterns` | First 50 lines of up to 3 `.spec.ts` / `.test.ts` files |
+| `playwright_config` | Raw content of `playwright.config.ts` / `playwright.config.js` |
+| `tsconfig`, `package_json` | Raw content if present |
+| `helper_utilities` | Files under `helpers/`, `utils/`, `fixtures/`, `support/` |
+| `is_cypress_repo` | Detects `cypress.config.*` or `cypress/` directory |
+| `cypress_to_playwright_notes` | LLM call (only if `is_cypress_repo`) |
+| `tests_directory` | Most common parent directory of test files |
+| `clone_path` | Absolute path to persisted clone |
+
+### New agent: ScaffoldAgent
+
+Generated scaffold structure:
+
+```
+{project_name}/
+├── tests/e2e/.gitkeep
+├── tests/smoke/.gitkeep
+├── pages/base.page.ts          # abstract class BasePage
+├── fixtures/index.ts           # re-exports test + expect
+├── helpers/auth.helper.ts      # login() stub that compiles
+├── test-data/.gitkeep
+├── playwright.config.ts        # Chromium, retries:2, baseURL from BASE_URL env
+├── tsconfig.json               # strict:true, ES2022, commonjs
+├── package.json                # @playwright/test, test/test:smoke/test:e2e scripts
+├── .gitignore                  # node_modules, playwright-report, test-results, .env
+└── .gitlab-ci.yml              # npm ci → playwright install chromium → npm test
+```
+
+### Deviations from spec
+
+| Item | Detail |
+|------|--------|
+| `test_repo_reader_stub_returns_dict` renamed | Now `test_repo_reader_returns_dict`; uses a real local git repo in `tmp_path`. |
+| `test_scaffold_stub_returns_dict` renamed | Now `test_scaffold_returns_dict`; uses `tmp_path` output redirect. |
+| e2e Flow A test mocks `_repo_reader.run` | The test focuses on Analyst→Browser→Coder→Reviewer; real repo clone is out of scope for that e2e test. |
+
+---
+
 ## Test Results
 
 ```
 ============================= test session starts ==============================
 platform linux -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0
-collected 53 items
+collected 84 items
 
-tests/test_analyst_agent.py        7 passed
-tests/test_browser_agent.py        7 passed
-tests/test_coder_agent.py         13 passed  (11 Tier 1 + 2 Tier 2 e2e)
-tests/test_reviewer_agent.py      10 passed  (8 Tier 1 + 2 Tier 2 e2e)
-tests/test_orchestrator.py        16 passed  (13 Tier 1 + 3 Tier 2 e2e)
+tests/test_analyst_agent.py         7 passed
+tests/test_browser_agent.py         7 passed
+tests/test_coder_agent.py          13 passed  (11 Tier 1 + 2 Tier 2 e2e)
+tests/test_reviewer_agent.py       10 passed  (8 Tier 1 + 2 Tier 2 e2e)
+tests/test_repo_reader_agent.py    15 passed  (all Tier 1)
+tests/test_scaffold_agent.py       14 passed  (all Tier 1)
+tests/test_orchestrator.py         18 passed  (15 Tier 1 + 3 Tier 2 e2e)
 
-======================== 53 passed ========================
+======================== 84 passed ========================
 ```
 
 ---
@@ -191,11 +258,13 @@ cp .env.example .env  # populate ANTHROPIC_API_KEY
 ### Tests
 
 ```bash
-uv run pytest tests/ -v                                       # full suite
-uv run pytest tests/ -v -m "not e2e"                         # Tier 1 only (fast)
-uv run pytest tests/test_orchestrator.py -v -m "not e2e"     # Orchestrator Tier 1 only
-uv run pytest tests/test_orchestrator.py -v -m e2e            # Orchestrator Tier 2 e2e only
-uv run pytest tests/test_reviewer_agent.py -v -m e2e          # Reviewer Tier 2 e2e only
+uv run pytest tests/ -v                                           # full suite
+uv run pytest tests/ -v -m "not e2e"                             # Tier 1 only (fast)
+uv run pytest tests/test_orchestrator.py -v -m "not e2e"         # Orchestrator Tier 1 only
+uv run pytest tests/test_repo_reader_agent.py -v                 # RepoReaderAgent all tests
+uv run pytest tests/test_scaffold_agent.py -v                    # ScaffoldAgent all tests
+uv run pytest tests/test_orchestrator.py -v -m e2e               # Orchestrator Tier 2 e2e only
+uv run pytest tests/test_reviewer_agent.py -v -m e2e             # Reviewer Tier 2 e2e only
 ```
 
 ### Pipeline
@@ -210,6 +279,10 @@ uv run python orchestrator.py path/to/test_case.txt https://staging.example.com 
 
 Prints the full result JSON to stdout, followed by the generated `.spec.ts` content.
 
+Output directories:
+- `output/cloned_repos/` — persisted repo clones from Flow A (gitignored)
+- `output/scaffolded/` — generated project scaffolds from Flow B (gitignored)
+
 ### Linters
 
 ```bash
@@ -222,6 +295,6 @@ uv run basedpyright llm/ agents/ agent_base.py orchestrator.py
 
 ## Next Phase
 
-**Phase 6 — Repo Reader Agent + Scaffold Agent**
+**Phase 7 — Git Agent**
 
-Replace `RepoReaderAgent` stub (reads an existing test repo structure and returns file tree + existing test patterns) and `ScaffoldAgent` stub (creates a new Playwright TypeScript project scaffold) with real LLM-based implementations. Wire results into Orchestrator Flow A and Flow B respectively.
+Replace `GitAgent` stub with a real implementation that creates a branch, commits the generated `.spec.ts` file into the appropriate location (from `RepoContext.clone_path` for Flow A, or the scaffold root for Flow B), and opens a merge/pull request against the target repo.

@@ -50,18 +50,25 @@ class Orchestrator:
         flow = "A" if repo_url is not None else "B"
         logger.info("Orchestrator — starting Flow %s (repo_url=%s)", flow, repo_url)
 
-        # Flow-specific preamble stubs
+        # Flow-specific preamble
+        repo_context: dict[str, Any] | None = None
+        scaffold_result: dict[str, Any] | None = None
+
         if flow == "A":
-            logger.info("Orchestrator — Flow A: running RepoReaderAgent (stub)")
-            self._repo_reader.run({"repo_url": repo_url})
+            logger.info("Orchestrator — Flow A: running RepoReaderAgent")
+            repo_context = self._repo_reader.run({"repo_url": repo_url})
         else:
-            logger.info("Orchestrator — Flow B: running ScaffoldAgent (stub)")
-            self._scaffold.run({})
+            project_name: str = input.get("project_name") or "spectre-project"
+            logger.info("Orchestrator — Flow B: running ScaffoldAgent (project=%s)", project_name)
+            scaffold_result = self._scaffold.run({"project_name": project_name})
 
         # Analyst
         logger.info("Orchestrator — running AnalystAgent")
+        analyst_input: dict[str, Any] = {"test_case": test_case}
+        if repo_context is not None:
+            analyst_input["repo_context"] = repo_context
         try:
-            analyst_output = self._analyst.run({"test_case": test_case})
+            analyst_output = self._analyst.run(analyst_input)
         except Exception as exc:
             raise RuntimeError(f"AnalystAgent failed: {exc}") from exc
 
@@ -121,6 +128,8 @@ class Orchestrator:
             "reviewer_verdict": reviewer_verdict,
             "retries": retries,
             "script": coder_output["script"],
+            "repo_context": repo_context,
+            "scaffold_result": scaffold_result,
         }
 
     def _run_browser(self, url: str) -> dict[str, Any]:

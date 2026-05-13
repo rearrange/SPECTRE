@@ -100,6 +100,12 @@ def _make_orchestrator_with_stubs(
     else:
         orch._reviewer.run = MagicMock(return_value=_default_pass)  # type: ignore[method-assign]
 
+    # Prevent real git/fs operations in unit tests
+    orch._repo_reader.run = MagicMock(
+        return_value={"clone_path": "/tmp/fake", "folder_structure": {}}
+    )  # type: ignore[method-assign]
+    orch._scaffold.run = MagicMock(return_value={"project_root": "/tmp/fake", "created_files": []})  # type: ignore[method-assign]
+
     return orch
 
 
@@ -249,22 +255,45 @@ def test_reviewer_returns_verdict_dict() -> None:
     assert isinstance(result["suggestions"], list)
 
 
-def test_repo_reader_stub_returns_dict() -> None:
+def test_repo_reader_returns_dict(tmp_path: Any) -> None:
+    """RepoReaderAgent.run() returns a dict with required keys (uses a real local repo)."""
+    import git
+
     from agents.repo_reader_agent import RepoReaderAgent
+
+    repo_path = tmp_path / "test-repo"
+    repo_path.mkdir()
+    (repo_path / "README.md").write_text("hello")
+    repo = git.Repo.init(repo_path)
+    with repo.config_writer() as cw:
+        cw.set_value("user", "name", "Test")
+        cw.set_value("user", "email", "test@example.com")
+    repo.git.add(A=True)
+    repo.index.commit("init")
+
+    clone_base = tmp_path / "clones"
+    clone_base.mkdir()
 
     llm = MagicMock()
     agent = RepoReaderAgent(llm)
-    result = agent.run({"repo_url": "https://github.com/example/repo"})
+    agent._clone_base = clone_base
+    result = agent.run({"repo_url": str(repo_path)})
     assert isinstance(result, dict)
+    assert "folder_structure" in result
+    assert "clone_path" in result
 
 
-def test_scaffold_stub_returns_dict() -> None:
+def test_scaffold_returns_dict(tmp_path: Any) -> None:
+    """ScaffoldAgent.run() returns a dict with required keys."""
     from agents.scaffold_agent import ScaffoldAgent
 
     llm = MagicMock()
     agent = ScaffoldAgent(llm)
-    result = agent.run({})
+    agent._output_base = tmp_path / "scaffolded"
+    result = agent.run({"project_name": "orch-test-project"})
     assert isinstance(result, dict)
+    assert "project_root" in result
+    assert "created_files" in result
 
 
 def test_git_stub_returns_dict() -> None:
@@ -360,6 +389,57 @@ def test_orchestrator_returns_last_fail_after_max_retries(
     assert result["reviewer_verdict"]["verdict"] == "FAIL"
 
 
+def test_flow_a_includes_repo_reader(
+    hardcoded_analyst_output: dict[str, Any],
+    hardcoded_browser_output: dict[str, Any],
+    hardcoded_coder_output: dict[str, Any],
+) -> None:
+    """Flow A — RepoReaderAgent is called and its output is forwarded to AnalystAgent."""
+    orch = _make_orchestrator_with_stubs(
+        hardcoded_analyst_output, hardcoded_browser_output, hardcoded_coder_output
+    )
+    mock_repo_context = {"clone_path": "/tmp/fake-repo", "folder_structure": {"tests/": {}}}
+    orch._repo_reader.run = MagicMock(return_value=mock_repo_context)  # type: ignore[method-assign]
+
+    orch.run(
+        {
+            "test_case": "dummy",
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": "https://github.com/example/repo",
+        }
+    )
+
+    orch._repo_reader.run.assert_called_once()  # type: ignore[union-attr]
+    analyst_call_input = orch._analyst.run.call_args[0][0]  # type: ignore[union-attr]
+    assert analyst_call_input.get("repo_context") == mock_repo_context
+
+
+def test_flow_b_includes_scaffold(
+    hardcoded_analyst_output: dict[str, Any],
+    hardcoded_browser_output: dict[str, Any],
+    hardcoded_coder_output: dict[str, Any],
+) -> None:
+    """Flow B — ScaffoldAgent is called before AnalystAgent."""
+    orch = _make_orchestrator_with_stubs(
+        hardcoded_analyst_output, hardcoded_browser_output, hardcoded_coder_output
+    )
+    mock_scaffold = {"project_root": "/tmp/fake-project", "created_files": []}
+    orch._scaffold.run = MagicMock(return_value=mock_scaffold)  # type: ignore[method-assign]
+
+    result = orch.run(
+        {
+            "test_case": "dummy",
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": None,
+            "project_name": "test-scaffold",
+        }
+    )
+
+    orch._scaffold.run.assert_called_once()  # type: ignore[union-attr]
+    orch._analyst.run.assert_called_once()  # type: ignore[union-attr]
+    assert result["scaffold_result"] == mock_scaffold
+
+
 def test_orchestrator_stops_retrying_on_pass(
     hardcoded_analyst_output: dict[str, Any],
     hardcoded_browser_output: dict[str, Any],
@@ -444,11 +524,18 @@ def test_orchestrator_full_flow_b_todomvc() -> None:
 
 @pytest.mark.e2e
 def test_orchestrator_full_flow_a_todomvc() -> None:
-    """Flow A (with repo_url) — full live pipeline with TodoMVC TC-001."""
+    """Flow A (with repo_url) — full live pipeline with TodoMVC TC-001.
+
+    RepoReaderAgent is mocked so no real repo clone is needed for this e2e pipeline test.
+    """
     from llm.anthropic_provider import AnthropicProvider
 
     llm = AnthropicProvider()
     orch = Orchestrator(llm=llm)
+    # Mock repo reader so the e2e test focuses on Analyst → Browser → Coder → Reviewer
+    orch._repo_reader.run = MagicMock(  # type: ignore[method-assign]
+        return_value={"clone_path": "/tmp/stub", "folder_structure": {}}
+    )
     result = orch.run(
         {
             "test_case": ADD_TODO_TEST_CASE,
