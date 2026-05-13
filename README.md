@@ -8,7 +8,7 @@ SPECTRE is a multi-agent AI system that converts plain-text manual test case doc
 runnable Playwright TypeScript test scripts. You write the test case in plain English. SPECTRE
 reads it, browses your app, and generates the automation code.
 
-**Status:** Active development — Phase 4 of 9 complete.
+**Status:** Active development — Phase 5 of 9 complete.
 
 ---
 
@@ -38,8 +38,14 @@ Plain-text test case + App URL
    └───────┬───────┘
            │ .spec.ts string
            ▼
-     [ Phases 5–9 ]
-     Reviewer, Git, Web UI
+   ┌───────────────┐
+   │Reviewer Agent │  LLM-based code review: syntax, coverage, best practices
+   │               │  → PASS (done) or FAIL (re-prompts Coder with feedback)
+   └───────┬───────┘
+           │ reviewed .spec.ts
+           ▼
+     [ Phases 6–9 ]
+     Repo Reader, Scaffold, Git, Web UI
 ```
 
 The generated script follows Playwright best practices: role-based selectors, AAA structure
@@ -104,6 +110,7 @@ uv run python orchestrator.py path/to/test_case.txt https://staging.example.com 
 1. Analyst Agent reads the test case and extracts structured JSON
 2. Browser Agent navigates the staging URL with headless Chromium and observes the UI
 3. Coder Agent generates a Playwright TypeScript `.spec.ts` file from both outputs
+4. Reviewer Agent checks the script for syntax validity, test coverage, and best practices — on FAIL, Coder rewrites with targeted feedback (up to 3 retries)
 
 **Output:** Full result JSON printed to stdout, followed by the generated `.spec.ts` content.
 
@@ -162,14 +169,14 @@ uv run pytest tests/ -v -m "not e2e"
 uv run pytest tests/test_analyst_agent.py -v
 uv run pytest tests/test_browser_agent.py -v
 uv run pytest tests/test_coder_agent.py -v
+uv run pytest tests/test_reviewer_agent.py -v
 uv run pytest tests/test_orchestrator.py -v
 ```
 
-### Orchestrator — Tier 2 e2e only
-
-Runs the full pipeline (Flow A and Flow B) with live API and Playwright against TodoMVC.
+### Tier 2 e2e tests (live API + browser)
 
 ```bash
+uv run pytest tests/test_reviewer_agent.py -v -m e2e
 uv run pytest tests/test_orchestrator.py -v -m e2e
 ```
 
@@ -185,7 +192,7 @@ SPECTRE/
 │   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
 │   ├── browser_agent.py       # Navigates a URL, returns UI observation JSON
 │   ├── coder_agent.py         # Generates Playwright TypeScript .spec.ts
-│   ├── reviewer_agent.py      # Stub — Phase 5
+│   ├── reviewer_agent.py      # LLM-based reviewer: syntax, coverage, best practices
 │   ├── repo_reader_agent.py   # Stub — Phase 6
 │   ├── scaffold_agent.py      # Stub — Phase 6
 │   └── git_agent.py           # Stub — Phase 7
@@ -209,7 +216,7 @@ SPECTRE/
 | 2 | ✅ Complete | Browser Agent — headless Chromium UI observation |
 | 3 | ✅ Complete | Coder Agent — generates Playwright TypeScript `.spec.ts` |
 | 4 | ✅ Complete | Orchestrator — wires full pipeline with flow routing and retry hook |
-| 5 | Planned | Reviewer Agent + retry loop |
+| 5 | ✅ Complete | Reviewer Agent + retry loop |
 | 6 | Planned | Repo Reader Agent + Scaffold Agent |
 | 7 | Planned | Git Agent — branch, commit, push, MR/PR |
 | 8 | Planned | FastAPI backend + Web UI |
