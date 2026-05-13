@@ -8,7 +8,7 @@ SPECTRE is a multi-agent AI system that converts plain-text manual test case doc
 runnable Playwright TypeScript test scripts. You write the test case in plain English. SPECTRE
 reads it, browses your app, and generates the automation code.
 
-**Status:** Active development — Phase 6 of 9 complete.
+**Status:** Active development — Phase 7 of 9 complete.
 
 ---
 
@@ -26,7 +26,7 @@ SPECTRE chains a series of specialised AI agents, each responsible for one step.
 | `BrowserAgent` | A + B | Playwright (headless Chromium), LLM | UI observation JSON: elements, forms, navigation |
 | `CoderAgent` | A + B | LLM | Playwright TypeScript `.spec.ts` string |
 | `ReviewerAgent` | A + B | LLM | `{"verdict", "issues", "suggestions"}` |
-| `GitAgent` | A + B | *(Phase 7 stub)* | *(branch, commit, MR/PR)* |
+| `GitAgent` | A + B | gitpython, python-gitlab (no LLM) | `git_result` dict: branch, commit SHA, MR URL, status |
 
 ### Flow A — existing repo
 
@@ -93,8 +93,10 @@ Plain-text test case + App URL
    └───────┬───────┘
            │ reviewed .spec.ts
            ▼
-     [ Phases 7–9 ]
-     Git Agent, FastAPI, Web UI
+   ┌───────────────┐
+   │   Git Agent   │  Flow A: creates branch, commits, pushes, opens MR
+   │               │  Flow B: git init, commits (no push, no MR)
+   └───────────────┘
 ```
 
 The generated script follows Playwright best practices: role-based selectors, AAA structure
@@ -162,11 +164,13 @@ uv run python orchestrator.py path/to/test_case.txt https://staging.example.com 
 3. Browser Agent navigates the staging URL with headless Chromium and observes the UI
 4. Coder Agent generates a Playwright TypeScript `.spec.ts` file
 5. Reviewer Agent checks the script — on FAIL, Coder rewrites with feedback (up to 3 retries)
+6. Git Agent creates a branch, commits the script, pushes, and opens a merge request
 
 **Flow B** (no repo URL):
 1. Scaffold Agent generates an opinionated Playwright TS project under `output/scaffolded/`
 2. Analyst Agent reads the test case
 3–5. Same as Flow A steps 3–5
+6. Git Agent inits the scaffold directory as a git repo and commits the script
 
 **Output:** Full result JSON printed to stdout, followed by the generated `.spec.ts` content.
 
@@ -232,6 +236,7 @@ uv run pytest tests/test_coder_agent.py -v
 uv run pytest tests/test_reviewer_agent.py -v
 uv run pytest tests/test_repo_reader_agent.py -v
 uv run pytest tests/test_scaffold_agent.py -v
+uv run pytest tests/test_git_agent.py -v
 uv run pytest tests/test_orchestrator.py -v
 ```
 
@@ -249,7 +254,7 @@ uv run pytest tests/test_orchestrator.py -v -m e2e
 ```
 SPECTRE/
 ├── agent_base.py              # Abstract base class for all agents (ReAct loop skeleton)
-├── errors.py                  # Shared exception types (RepoReaderError, ScaffoldError)
+├── errors.py                  # Shared exception types (RepoReaderError, ScaffoldError, GitAgentError)
 ├── orchestrator.py            # Orchestrator class + Flow A/B routing + CLI entry point
 ├── agents/
 │   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
@@ -258,13 +263,14 @@ SPECTRE/
 │   ├── reviewer_agent.py      # LLM-based reviewer: syntax, coverage, best practices
 │   ├── repo_reader_agent.py   # Clones repo, extracts tree + patterns + config (Flow A)
 │   ├── scaffold_agent.py      # Generates opinionated PW TS project on disk (Flow B)
-│   └── git_agent.py           # Stub — Phase 7
+│   └── git_agent.py           # Branch, commit, push, open MR/PR (Flow A); init + commit (Flow B)
 ├── llm/
 │   ├── base.py                # LLMProvider ABC + LLMResponse dataclass
 │   ├── anthropic_provider.py  # Default provider (Claude)
 │   └── openai_provider.py     # Drop-in swap (not yet implemented)
 ├── tools/
-│   └── browser_tools.py       # Async Playwright wrappers used by BrowserAgent
+│   ├── browser_tools.py       # Async Playwright wrappers used by BrowserAgent
+│   └── git_tools.py           # Synchronous git wrappers used by GitAgent
 ├── tests/                     # pytest suite — one file per agent + orchestrator
 └── output/
     ├── cloned_repos/           # Persisted repo clones — Flow A (gitignored)
@@ -283,8 +289,8 @@ SPECTRE/
 | 4 | ✅ Complete | Orchestrator — wires full pipeline with flow routing and retry hook |
 | 5 | ✅ Complete | Reviewer Agent + retry loop |
 | 6 | ✅ Complete | Repo Reader Agent + Scaffold Agent |
-| 7 | 🔜 Next | Git Agent — branch, commit, push, MR/PR |
-| 8 | Planned | FastAPI backend + Web UI |
+| 7 | ✅ Complete | Git Agent — branch, commit, push, MR/PR |
+| 8 | 🔜 Next | FastAPI backend + Web UI |
 | 9 | Planned | Polish + CTO demo |
 
 ---

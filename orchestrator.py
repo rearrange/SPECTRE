@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import json
 import logging
+import re
+import tempfile
 from typing import Any
 
 from playwright.async_api import async_playwright
@@ -24,11 +26,20 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 
-class Orchestrator:
-    """Chains AnalystAgent → BrowserAgent → CoderAgent with flow routing and a reviewer retry hook.
+def _slugify(text: str) -> str:
+    """Convert the first meaningful line of text into a URL-safe slug."""
+    first_line = text.strip().split("\n")[0]
+    for prefix in ("TEST CASE:", "Test Case:", "test case:"):
+        first_line = first_line.replace(prefix, "")
+    slug = re.sub(r"[^a-z0-9]+", "-", first_line.lower()).strip("-")
+    return slug[:50] or "generated-test"
 
-    Flow A: repo_url is present  — RepoReader stub → Analyst → Browser → Coder → Reviewer stub → Git stub
-    Flow B: repo_url is None     — Scaffold stub   → Analyst → Browser → Coder → Reviewer stub → Git stub
+
+class Orchestrator:
+    """Chains all SPECTRE agents with flow routing and a reviewer retry hook.
+
+    Flow A: repo_url is present  — RepoReader → Analyst → Browser → Coder → Reviewer → Git (branch/push/MR)
+    Flow B: repo_url is None     — Scaffold   → Analyst → Browser → Coder → Reviewer → Git (init/commit)
     """
 
     def __init__(self, llm: LLMProvider) -> None:
@@ -46,6 +57,7 @@ class Orchestrator:
         test_case: str = input["test_case"]
         staging_url: str = input["staging_url"]
         repo_url: str | None = input.get("repo_url")
+        test_case_name: str = input.get("test_case_name") or _slugify(test_case)
 
         flow = "A" if repo_url is not None else "B"
         logger.info("Orchestrator — starting Flow %s (repo_url=%s)", flow, repo_url)
@@ -116,9 +128,30 @@ class Orchestrator:
             # Loop exhausted without a PASS
             retries = MAX_RETRIES - 1
 
-        # Git stub
-        logger.info("Orchestrator — running GitAgent (stub)")
-        self._git.run({"script": coder_output["script"]})
+        # Git agent — save script to a temp file then hand off
+        logger.info("Orchestrator — running GitAgent (Flow %s)", flow)
+        with tempfile.NamedTemporaryFile(
+            suffix=".spec.ts", mode="w", delete=False, prefix=f"spectre-{test_case_name}-"
+        ) as tmp:
+            tmp.write(coder_output["script"])
+            script_path = tmp.name
+
+        repo_path: str = ""
+        if flow == "A" and repo_context is not None:
+            repo_path = str(repo_context.get("clone_path", ""))
+        elif flow == "B" and scaffold_result is not None:
+            repo_path = str(scaffold_result.get("project_root", ""))
+
+        git_input: dict[str, Any] = {
+            "flow": flow,
+            "test_case_name": test_case_name,
+            "script_path": script_path,
+            "repo_path": repo_path,
+        }
+        if flow == "A":
+            git_input["repo_url"] = repo_url
+
+        git_result = self._git.run(git_input)
 
         return {
             "flow": flow,
@@ -130,6 +163,7 @@ class Orchestrator:
             "script": coder_output["script"],
             "repo_context": repo_context,
             "scaffold_result": scaffold_result,
+            "git_result": git_result,
         }
 
     def _run_browser(self, url: str) -> dict[str, Any]:

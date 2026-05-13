@@ -7,3 +7,7 @@ class RepoReaderError(Exception):
 
 class ScaffoldError(Exception):
     """Raised when ScaffoldAgent fails to generate project structure."""
+
+
+class GitAgentError(Exception):
+    """Raised when GitAgent fails to perform git operations or open an MR/PR."""

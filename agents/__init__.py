@@ -5,7 +5,7 @@ from agents.git_agent import GitAgent
 from agents.repo_reader_agent import RepoReaderAgent
 from agents.reviewer_agent import ReviewerAgent, ReviewerError
 from agents.scaffold_agent import ScaffoldAgent
-from errors import RepoReaderError, ScaffoldError
+from errors import GitAgentError, RepoReaderError, ScaffoldError
 
 __all__ = [
     "AnalystAgent",
@@ -15,6 +15,7 @@ __all__ = [
     "CoderAgent",
     "CoderError",
     "GitAgent",
+    "GitAgentError",
     "RepoReaderAgent",
     "RepoReaderError",
     "ReviewerAgent",

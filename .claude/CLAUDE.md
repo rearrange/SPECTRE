@@ -4,8 +4,8 @@
 
 - **Name:** SPECTRE
 - **Description:** Multi-agent AI system that generates Playwright TypeScript test scripts from plain-text manual test case documents.
-- **Current phase:** Phase 6 — Complete
-- **Status:** All 84 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
+- **Current phase:** Phase 7 — Complete
+- **Status:** All 98 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
 
 ## Current File Tree
 
@@ -15,7 +15,7 @@ SPECTRE/
 ├── .gitattributes
 ├── .gitignore
 ├── agent_base.py              # Abstract BaseAgent with ReAct loop skeleton
-├── errors.py                  # Shared exception types: RepoReaderError, ScaffoldError
+├── errors.py                  # Shared exception types: RepoReaderError, ScaffoldError, GitAgentError
 ├── orchestrator.py            # Orchestrator class + Flow A/B routing + retry loop + CLI entry point
 ├── pyproject.toml
 ├── uv.lock
@@ -27,7 +27,7 @@ SPECTRE/
 │   ├── reviewer_agent.py      # LLM-based reviewer: checks syntax, coverage, best practices; raises ReviewerError
 │   ├── repo_reader_agent.py   # Clones Git repo, extracts folder tree + test patterns + config; one LLM call for Cypress notes
 │   ├── scaffold_agent.py      # Generates opinionated PW TS project on disk; no LLM calls; raises ScaffoldError if exists
-│   └── git_agent.py           # Stub — returns placeholder dict; to be implemented in Phase 7
+│   └── git_agent.py           # Branch/commit/push/MR (Flow A) or init/commit (Flow B); no LLM calls; raises GitAgentError
 ├── llm/
 │   ├── __init__.py
 │   ├── base.py                # LLMProvider ABC + LLMResponse dataclass
@@ -35,7 +35,8 @@ SPECTRE/
 │   └── openai_provider.py     # OpenAI stub (NotImplementedError)
 ├── tools/
 │   ├── __init__.py
-│   └── browser_tools.py       # Async Playwright wrappers: browse_url, get_page_content, etc.
+│   ├── browser_tools.py       # Async Playwright wrappers: browse_url, get_page_content, etc.
+│   └── git_tools.py           # Sync git wrappers: init_repo, clone_repo, create_branch, stage_and_commit, open_gitlab_mr, detect_provider
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py            # Shared fixtures: TodoMVC test cases, hardcoded JSON, agents
@@ -45,7 +46,8 @@ SPECTRE/
 │   ├── test_reviewer_agent.py # 10 tests — ReviewerAgent contract (8 Tier 1 + 2 Tier 2 e2e)
 │   ├── test_repo_reader_agent.py  # 15 tests — RepoReaderAgent contract (all Tier 1, real git)
 │   ├── test_scaffold_agent.py     # 14 tests — ScaffoldAgent contract (all Tier 1)
-│   └── test_orchestrator.py   # 18 tests — Orchestrator contract (15 Tier 1 + 3 Tier 2 e2e)
+│   ├── test_git_agent.py          # 14 tests — GitAgent contract (all Tier 1, all mocked)
+│   └── test_orchestrator.py   # 19 tests — Orchestrator contract (16 Tier 1 + 3 Tier 2 e2e)
 └── output/
     ├── .gitkeep               # Tracks gitignored output directory
     ├── cloned_repos/          # Persisted repo clones (created by RepoReaderAgent, gitignored)
@@ -225,12 +227,37 @@ Generated scaffold structure:
 
 ---
 
+## Phase 7 — Git Agent
+
+Replaces the `GitAgent` stub with a real deterministic implementation (no LLM calls). Also introduces `tools/git_tools.py` as the low-level git operations layer, and adds `GitAgentError` to `errors.py`.
+
+### What changed
+
+- **`errors.py`** — `GitAgentError` added.
+- **`tools/git_tools.py`** (new) — pure synchronous functions: `init_repo`, `clone_repo`, `create_branch`, `copy_script_to_repo`, `stage_and_commit`, `push_branch`, `open_gitlab_mr`, `open_github_pr` (stub, raises `NotImplementedError`), `detect_provider`.
+- **`agents/git_agent.py`** — fully implemented. Flow A: opens existing repo, creates `spectre/tc-{name}` branch, copies script, commits, pushes, opens GitLab MR. Flow B: `git init`, copies script, commits (no push, no MR). Raises `GitAgentError` on any failure.
+- **`agents/__init__.py`** — exports `GitAgentError`.
+- **`orchestrator.py`** — saves the generated script to a temp `.spec.ts` file, determines `repo_path` from flow context, builds the GitAgent input dict, and includes `git_result` in the return dict. Adds `_slugify()` to derive a branch-safe `test_case_name` from the test case text. Optional `test_case_name` field accepted in orchestrator input.
+- **`pyproject.toml`** — `python-gitlab>=4.0.0` added as a dependency.
+- **`tests/test_git_agent.py`** (new) — 14 Tier 1 tests (all mocked). Covers Flow A (5 tests), Flow B (4 tests), git_tools unit tests (5 tests).
+- **`tests/test_orchestrator.py`** — `_make_orchestrator_with_stubs` now mocks `_git.run`; e2e tests mock `_git.run` to prevent real git operations; `test_git_stub_returns_dict` renamed `test_git_returns_dict` and updated to use real GitAgent with mocked tools.
+
+### Deviations from spec
+
+| Item | Detail |
+|------|--------|
+| `python-gitlab` not pre-installed | Was not in `pyproject.toml` as stated. Added during Phase 7 and installed via `uv sync`. |
+| `open_gitlab_mr` import inside function | `import gitlab` is at module top level in `git_tools.py`; the call is mocked in all tests so no live API is exercised. |
+| e2e orchestrator tests mock `_git.run` | Keeps e2e tests focused on the AI pipeline (Analyst → Browser → Coder → Reviewer) without requiring a real remote repo or GitLab token. |
+
+---
+
 ## Test Results
 
 ```
 ============================= test session starts ==============================
 platform linux -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0
-collected 84 items
+collected 98 items
 
 tests/test_analyst_agent.py         7 passed
 tests/test_browser_agent.py         7 passed
@@ -238,9 +265,10 @@ tests/test_coder_agent.py          13 passed  (11 Tier 1 + 2 Tier 2 e2e)
 tests/test_reviewer_agent.py       10 passed  (8 Tier 1 + 2 Tier 2 e2e)
 tests/test_repo_reader_agent.py    15 passed  (all Tier 1)
 tests/test_scaffold_agent.py       14 passed  (all Tier 1)
-tests/test_orchestrator.py         18 passed  (15 Tier 1 + 3 Tier 2 e2e)
+tests/test_git_agent.py            14 passed  (all Tier 1)
+tests/test_orchestrator.py         19 passed  (16 Tier 1 + 3 Tier 2 e2e)
 
-======================== 84 passed ========================
+======================== 98 passed ========================
 ```
 
 ---
@@ -263,6 +291,7 @@ uv run pytest tests/ -v -m "not e2e"                             # Tier 1 only (
 uv run pytest tests/test_orchestrator.py -v -m "not e2e"         # Orchestrator Tier 1 only
 uv run pytest tests/test_repo_reader_agent.py -v                 # RepoReaderAgent all tests
 uv run pytest tests/test_scaffold_agent.py -v                    # ScaffoldAgent all tests
+uv run pytest tests/test_git_agent.py -v                         # GitAgent all tests
 uv run pytest tests/test_orchestrator.py -v -m e2e               # Orchestrator Tier 2 e2e only
 uv run pytest tests/test_reviewer_agent.py -v -m e2e             # Reviewer Tier 2 e2e only
 ```
@@ -288,13 +317,13 @@ Output directories:
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run basedpyright llm/ agents/ agent_base.py orchestrator.py
+uv run basedpyright llm/ agents/ tools/ agent_base.py orchestrator.py errors.py
 ```
 
 ---
 
 ## Next Phase
 
-**Phase 7 — Git Agent**
+**Phase 8 — FastAPI backend + Web UI**
 
-Replace `GitAgent` stub with a real implementation that creates a branch, commits the generated `.spec.ts` file into the appropriate location (from `RepoContext.clone_path` for Flow A, or the scaffold root for Flow B), and opens a merge/pull request against the target repo.
+Wrap the orchestrator pipeline in a FastAPI service with a minimal web frontend so non-technical users can submit a test case document and staging URL via a browser and receive the generated `.spec.ts` (and git result) without touching the CLI.

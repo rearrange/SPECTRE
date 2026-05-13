@@ -105,6 +105,14 @@ def _make_orchestrator_with_stubs(
         return_value={"clone_path": "/tmp/fake", "folder_structure": {}}
     )  # type: ignore[method-assign]
     orch._scaffold.run = MagicMock(return_value={"project_root": "/tmp/fake", "created_files": []})  # type: ignore[method-assign]
+    orch._git.run = MagicMock(
+        return_value={
+            "branch": "spectre/tc-test",
+            "commit_sha": "abc123",
+            "mr_url": None,
+            "status": "success",
+        }
+    )  # type: ignore[method-assign]
 
     return orch
 
@@ -296,13 +304,35 @@ def test_scaffold_returns_dict(tmp_path: Any) -> None:
     assert "created_files" in result
 
 
-def test_git_stub_returns_dict() -> None:
+def test_git_returns_dict(tmp_path: Any) -> None:
+    from pathlib import Path
+    from unittest.mock import patch
+
     from agents.git_agent import GitAgent
 
     llm = MagicMock()
     agent = GitAgent(llm)
-    result = agent.run({"script": "some script"})
+
+    script_file = Path(tmp_path) / "test.spec.ts"
+    script_file.write_text("// test")
+
+    with (
+        patch("agents.git_agent.init_repo") as mock_init,
+        patch("agents.git_agent.copy_script_to_repo", return_value="tests/test.spec.ts"),
+        patch("agents.git_agent.stage_and_commit", return_value="abc123"),
+    ):
+        mock_init.return_value = MagicMock()
+        result = agent.run(
+            {
+                "flow": "B",
+                "test_case_name": "add-todo",
+                "script_path": str(script_file),
+                "repo_path": str(tmp_path / "repo"),
+            }
+        )
+
     assert isinstance(result, dict)
+    assert result["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -505,11 +535,17 @@ Test Data:
 
 @pytest.mark.e2e
 def test_orchestrator_full_flow_b_todomvc() -> None:
-    """Flow B (no repo_url) — full live pipeline with TodoMVC TC-001."""
+    """Flow B (no repo_url) — full live pipeline with TodoMVC TC-001.
+
+    GitAgent is mocked so no real git operations happen in this AI pipeline test.
+    """
     from llm.anthropic_provider import AnthropicProvider
 
     llm = AnthropicProvider()
     orch = Orchestrator(llm=llm)
+    orch._git.run = MagicMock(
+        return_value={"branch": "main", "commit_sha": "abc123", "mr_url": None, "status": "success"}
+    )  # type: ignore[method-assign]
     result = orch.run(
         {
             "test_case": ADD_TODO_TEST_CASE,
@@ -526,16 +562,23 @@ def test_orchestrator_full_flow_b_todomvc() -> None:
 def test_orchestrator_full_flow_a_todomvc() -> None:
     """Flow A (with repo_url) — full live pipeline with TodoMVC TC-001.
 
-    RepoReaderAgent is mocked so no real repo clone is needed for this e2e pipeline test.
+    RepoReaderAgent and GitAgent are mocked so no real repo clone or git ops happen.
     """
     from llm.anthropic_provider import AnthropicProvider
 
     llm = AnthropicProvider()
     orch = Orchestrator(llm=llm)
-    # Mock repo reader so the e2e test focuses on Analyst → Browser → Coder → Reviewer
     orch._repo_reader.run = MagicMock(  # type: ignore[method-assign]
         return_value={"clone_path": "/tmp/stub", "folder_structure": {}}
     )
+    orch._git.run = MagicMock(
+        return_value={
+            "branch": "spectre/tc-test",
+            "commit_sha": "abc123",
+            "mr_url": "https://gitlab.com/mr/1",
+            "status": "success",
+        }
+    )  # type: ignore[method-assign]
     result = orch.run(
         {
             "test_case": ADD_TODO_TEST_CASE,
@@ -550,11 +593,17 @@ def test_orchestrator_full_flow_a_todomvc() -> None:
 
 @pytest.mark.e2e
 def test_orchestrator_e2e_retry_loop_forced_fail() -> None:
-    """Force coder to return a broken script on first call; retry loop must resolve to PASS."""
+    """Force coder to return a broken script on first call; retry loop must resolve to PASS.
+
+    GitAgent is mocked so no real git operations happen.
+    """
     from llm.anthropic_provider import AnthropicProvider
 
     llm = AnthropicProvider()
     orch = Orchestrator(llm=llm)
+    orch._git.run = MagicMock(
+        return_value={"branch": "main", "commit_sha": "abc123", "mr_url": None, "status": "success"}
+    )  # type: ignore[method-assign]
 
     call_count = 0
     real_coder_run = orch._coder.run
