@@ -72,21 +72,25 @@ class Orchestrator:
         except Exception as exc:
             raise RuntimeError(f"BrowserAgent failed: {exc}") from exc
 
-        # Coder
-        logger.info("Orchestrator — running CoderAgent")
-        try:
-            coder_output = self._coder.run(
-                {"analyst_output": analyst_output, "browser_output": browser_output}
-            )
-        except Exception as exc:
-            raise RuntimeError(f"CoderAgent failed: {exc}") from exc
-
-        # Reviewer retry loop (stub always passes; loop is structurally wired for Phase 5)
+        # Coder + Reviewer retry loop
+        coder_input: dict[str, Any] = {
+            "analyst_output": analyst_output,
+            "browser_output": browser_output,
+        }
+        coder_output: dict[str, Any] = {}
         reviewer_verdict: dict[str, Any] = {}
         retries = 0
         for attempt in range(MAX_RETRIES):
+            logger.info("Orchestrator — CoderAgent attempt %d/%d", attempt + 1, MAX_RETRIES)
+            try:
+                coder_output = self._coder.run(coder_input)
+            except Exception as exc:
+                raise RuntimeError(f"CoderAgent failed: {exc}") from exc
+
             logger.info("Orchestrator — ReviewerAgent attempt %d/%d", attempt + 1, MAX_RETRIES)
-            reviewer_verdict = self._reviewer.run({"script": coder_output["script"]})
+            reviewer_verdict = self._reviewer.run(
+                {"script": coder_output["script"], "analyst_output": analyst_output}
+            )
             if reviewer_verdict["verdict"] == "PASS":
                 retries = attempt
                 break
@@ -96,6 +100,11 @@ class Orchestrator:
                 attempt + 1,
                 reviewer_verdict.get("issues"),
             )
+            coder_input = {
+                "analyst_output": analyst_output,
+                "browser_output": browser_output,
+                "reviewer_feedback": reviewer_verdict,
+            }
         else:
             # Loop exhausted without a PASS
             retries = MAX_RETRIES - 1

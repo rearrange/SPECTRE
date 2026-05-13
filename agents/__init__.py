@@ -3,7 +3,7 @@ from agents.browser_agent import BrowserAgent, BrowserParseError
 from agents.coder_agent import CoderAgent, CoderError
 from agents.git_agent import GitAgent
 from agents.repo_reader_agent import RepoReaderAgent
-from agents.reviewer_agent import ReviewerAgent
+from agents.reviewer_agent import ReviewerAgent, ReviewerError
 from agents.scaffold_agent import ScaffoldAgent
 
 __all__ = [
@@ -16,5 +16,6 @@ __all__ = [
     "GitAgent",
     "RepoReaderAgent",
     "ReviewerAgent",
+    "ReviewerError",
     "ScaffoldAgent",
 ]

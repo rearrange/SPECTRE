@@ -71,6 +71,7 @@ class CoderAgent(BaseAgent):
         """
         analyst_output: dict[str, Any] = input["analyst_output"]
         browser_output: dict[str, Any] = input["browser_output"]
+        reviewer_feedback: dict[str, Any] | None = input.get("reviewer_feedback")
 
         logger.info(
             "[%s] Running — test: %s, url: %s",
@@ -85,6 +86,20 @@ class CoderAgent(BaseAgent):
             "BROWSER OUTPUT:\n"
             f"{json.dumps(browser_output, indent=2)}"
         )
+
+        if reviewer_feedback is not None:
+            issues = reviewer_feedback.get("issues", [])
+            suggestions = reviewer_feedback.get("suggestions", [])
+            issues_text = "\n".join(f"- {issue}" for issue in issues)
+            suggestions_text = "\n".join(f"- {s}" for s in suggestions)
+            user_message += (
+                "\n\nThe previous version of this script was reviewed and rejected. "
+                "Address all issues before regenerating.\n\n"
+                "REVIEWER FEEDBACK:\n"
+                f"Issues:\n{issues_text}\n\n"
+                f"Suggestions:\n{suggestions_text}\n\n"
+                "Regenerate the complete corrected script."
+            )
 
         observation = self._react_loop(user_message)
         response = self._llm.complete(system=SYSTEM_PROMPT, user=observation)

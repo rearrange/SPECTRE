@@ -4,8 +4,8 @@
 
 - **Name:** SPECTRE
 - **Description:** Multi-agent AI system that generates Playwright TypeScript test scripts from plain-text manual test case documents.
-- **Current phase:** Phase 4 — Complete
-- **Status:** All 38 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
+- **Current phase:** Phase 5 — Complete
+- **Status:** All 53 tests passing. Linting (ruff) and type checking (basedpyright) fully clean.
 
 ## Current File Tree
 
@@ -15,15 +15,15 @@ SPECTRE/
 ├── .gitattributes
 ├── .gitignore
 ├── agent_base.py              # Abstract BaseAgent with ReAct loop skeleton
-├── orchestrator.py            # Orchestrator class + flow routing + CLI entry point
+├── orchestrator.py            # Orchestrator class + flow routing + retry loop + CLI entry point
 ├── pyproject.toml
 ├── uv.lock
 ├── agents/
 │   ├── __init__.py            # Exports all agents + their errors
 │   ├── analyst_agent.py       # Extracts structured JSON from plain-text test cases
 │   ├── browser_agent.py       # Navigates URL with Playwright, returns UI observation JSON
-│   ├── coder_agent.py         # Takes Analyst + Browser JSON, generates Playwright TS .spec.ts
-│   ├── reviewer_agent.py      # Stub — always returns PASS; to be implemented in Phase 5
+│   ├── coder_agent.py         # Takes Analyst + Browser JSON, generates Playwright TS .spec.ts; accepts optional reviewer_feedback
+│   ├── reviewer_agent.py      # LLM-based reviewer: checks syntax, coverage, best practices; raises ReviewerError
 │   ├── repo_reader_agent.py   # Stub — returns placeholder dict; to be implemented in Phase 6
 │   ├── scaffold_agent.py      # Stub — returns placeholder dict; to be implemented in Phase 6
 │   └── git_agent.py           # Stub — returns placeholder dict; to be implemented in Phase 7
@@ -41,7 +41,8 @@ SPECTRE/
 │   ├── test_analyst_agent.py  # 7 tests — AnalystAgent contract
 │   ├── test_browser_agent.py  # 7 tests — BrowserAgent contract
 │   ├── test_coder_agent.py    # 13 tests — CoderAgent contract (11 Tier 1 + 2 Tier 2 e2e)
-│   └── test_orchestrator.py   # 11 tests — Orchestrator contract (9 Tier 1 + 2 Tier 2 e2e)
+│   ├── test_reviewer_agent.py # 10 tests — ReviewerAgent contract (8 Tier 1 + 2 Tier 2 e2e)
+│   └── test_orchestrator.py   # 16 tests — Orchestrator contract (13 Tier 1 + 3 Tier 2 e2e)
 └── output/
     └── .gitkeep               # Tracks gitignored output directory
 ```
@@ -120,17 +121,6 @@ Wires the full pipeline with flow routing (Flow A / Flow B) and a structurally-p
 - **Flow B** (`repo_url` absent): Scaffold stub → Analyst → Browser → Coder → Reviewer stub → Git stub
 - **`MAX_RETRIES = 3`** — retry loop is structurally wired; stub always returns PASS so retries is always 0 in normal operation
 
-Tests are split into two tiers:
-- **Tier 1** — 9 unit tests (all agents mocked via `MagicMock`, no network, no browser): `uv run pytest tests/test_orchestrator.py -v -m "not e2e"`
-- **Tier 2** — 2 e2e integration tests (live API + Playwright, TodoMVC): `uv run pytest tests/test_orchestrator.py -v -m e2e`
-
-### Deviations from spec
-
-| Item | Detail |
-|------|--------|
-| Unit tests mock `_run_browser` not `_browser.run` | Mocking the sync wrapper avoids launching Chromium in Tier 1 tests. Mocking the async `_browser.run` would still require `asyncio.run()` + Playwright context setup, defeating the purpose. |
-| E2e tests call `orch.run()` directly (no `asyncio.run()`) | `Orchestrator.run()` is synchronous and uses `asyncio.run()` internally for the browser step. The test body needs no async handling. |
-
 ### Key decisions
 
 **`Orchestrator._run_browser()` is synchronous** — wraps the async Playwright flow in `asyncio.run()`, making `Orchestrator.run()` fully synchronous and easy to call from tests and the CLI without async ceremony.
@@ -141,58 +131,49 @@ Tests are split into two tiers:
 
 ---
 
+## Phase 5 — ReviewerAgent + Retry Loop
+
+Replaces the `ReviewerAgent` stub with a real LLM-based reviewer. Wires the Orchestrator retry loop to pass full feedback back to `CoderAgent` for a targeted rewrite on `FAIL`.
+
+### What changed
+
+- **`agents/reviewer_agent.py`** — fully implemented LLM-based reviewer. Sends the script and analyst_output to Claude and returns a `{"verdict", "issues", "suggestions"}` dict. Raises `ReviewerError` on empty or unparseable response. Strips markdown code fences the LLM occasionally adds despite system prompt instructions.
+- **`orchestrator.py`** — retry loop now re-calls `CoderAgent` on FAIL, passing `reviewer_feedback` in the coder input. After `MAX_RETRIES` exhausted, returns last state without raising.
+- **`agents/coder_agent.py`** — optionally reads `reviewer_feedback` from input dict and appends formatted feedback block to the generation prompt. Backward-compatible; existing tests unaffected.
+- **`agents/__init__.py`** — exports `ReviewerError`.
+- **`tests/test_reviewer_agent.py`** — 10 new tests (8 Tier 1, 2 Tier 2 e2e).
+- **`tests/test_orchestrator.py`** — 5 new tests (4 Tier 1, 1 Tier 2 e2e for forced-fail retry loop).
+
+### Three review criteria
+
+1. **Playwright TS syntax validity** — valid TypeScript, correct Playwright API usage
+2. **Test coverage** — every step and assertion from `analyst_output` is represented
+3. **Best practices** — proper `expect()` assertions, semantic locators (`getByRole`, `getByLabel`, `getByTestId`), no `waitForTimeout()` sleeps
+
+### Deviations from spec
+
+| Item | Detail |
+|------|--------|
+| Markdown fence stripping | LLM occasionally wraps response in ` ```json ``` ` despite system prompt. `ReviewerAgent` strips these before `json.loads()`. |
+| `test_reviewer_stub_returns_pass_verdict` renamed | Original test tested stub behavior; renamed `test_reviewer_returns_verdict_dict` to test the real implementation with a mocked LLM. |
+| `_make_orchestrator_with_stubs` always mocks reviewer | When `reviewer_side_effects=None`, reviewer is now mocked with a default PASS to prevent the real LLM from being called in basic unit tests. |
+
+---
+
 ## Test Results
 
 ```
 ============================= test session starts ==============================
-platform linux -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0 -- /home/rearrange/Codes/GitLab/spectre/.venv/bin/python
-cachedir: .pytest_cache
-rootdir: /home/rearrange/Codes/GitLab/spectre
-configfile: pyproject.toml
-plugins: anyio-4.13.0, asyncio-1.3.0
-asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collecting ... collected 38 items
+platform linux -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0
+collected 53 items
 
-tests/test_analyst_agent.py::test_analyst_extracts_title PASSED          [  2%]
-tests/test_analyst_agent.py::test_analyst_extracts_steps PASSED          [  5%]
-tests/test_analyst_agent.py::test_analyst_steps_have_required_fields PASSED [  7%]
-tests/test_analyst_agent.py::test_analyst_extracts_preconditions PASSED  [ 10%]
-tests/test_analyst_agent.py::test_analyst_extracts_assertions PASSED     [ 13%]
-tests/test_analyst_agent.py::test_analyst_returns_valid_json_structure PASSED [ 15%]
-tests/test_analyst_agent.py::test_analyst_handles_search_test_case PASSED [ 18%]
-tests/test_browser_agent.py::test_browser_agent_returns_url PASSED       [ 21%]
-tests/test_browser_agent.py::test_browser_agent_returns_page_title PASSED [ 23%]
-tests/test_browser_agent.py::test_browser_agent_returns_interactive_elements PASSED [ 26%]
-tests/test_browser_agent.py::test_browser_agent_interactive_elements_have_required_fields PASSED [ 28%]
-tests/test_browser_agent.py::test_browser_agent_returns_navigation PASSED [ 31%]
-tests/test_browser_agent.py::test_browser_agent_returns_page_structure PASSED [ 34%]
-tests/test_browser_agent.py::test_browser_agent_returns_valid_json_structure PASSED [ 36%]
-tests/test_coder_agent.py::test_coder_returns_script_key PASSED          [ 39%]
-tests/test_coder_agent.py::test_coder_script_has_playwright_import PASSED [ 42%]
-tests/test_coder_agent.py::test_coder_script_has_test_block PASSED       [ 44%]
-tests/test_coder_agent.py::test_coder_script_has_describe_block PASSED   [ 47%]
-tests/test_coder_agent.py::test_coder_script_has_expect PASSED           [ 50%]
-tests/test_coder_agent.py::test_coder_script_references_app_url PASSED   [ 52%]
-tests/test_coder_agent.py::test_coder_script_has_goto PASSED             [ 55%]
-tests/test_coder_agent.py::test_coder_script_no_positional_selectors PASSED [ 57%]
-tests/test_coder_agent.py::test_coder_script_has_aaa_comments PASSED     [ 60%]
-tests/test_coder_agent.py::test_coder_script_covers_all_steps PASSED     [ 63%]
-tests/test_coder_agent.py::test_coder_handles_complete_todo_input PASSED [ 65%]
-tests/test_coder_agent.py::test_e2e_coder_add_todo_produces_script PASSED [ 68%]
-tests/test_coder_agent.py::test_e2e_coder_complete_todo_produces_script PASSED [ 71%]
-tests/test_orchestrator.py::test_orchestrator_routes_flow_a_when_repo_url_present PASSED [ 73%]
-tests/test_orchestrator.py::test_orchestrator_routes_flow_b_when_repo_url_absent PASSED [ 76%]
-tests/test_orchestrator.py::test_orchestrator_output_has_required_keys PASSED [ 78%]
-tests/test_orchestrator.py::test_orchestrator_retry_hook_increments_on_fail PASSED [ 81%]
-tests/test_orchestrator.py::test_orchestrator_retry_hook_respects_max_retries PASSED [ 84%]
-tests/test_orchestrator.py::test_reviewer_stub_returns_pass_verdict PASSED [ 86%]
-tests/test_orchestrator.py::test_repo_reader_stub_returns_dict PASSED    [ 89%]
-tests/test_orchestrator.py::test_scaffold_stub_returns_dict PASSED       [ 92%]
-tests/test_orchestrator.py::test_git_stub_returns_dict PASSED            [ 94%]
-tests/test_orchestrator.py::test_orchestrator_full_flow_b_todomvc PASSED [ 97%]
-tests/test_orchestrator.py::test_orchestrator_full_flow_a_todomvc PASSED [100%]
+tests/test_analyst_agent.py        7 passed
+tests/test_browser_agent.py        7 passed
+tests/test_coder_agent.py         13 passed  (11 Tier 1 + 2 Tier 2 e2e)
+tests/test_reviewer_agent.py      10 passed  (8 Tier 1 + 2 Tier 2 e2e)
+tests/test_orchestrator.py        16 passed  (13 Tier 1 + 3 Tier 2 e2e)
 
-======================== 38 passed in 211.44s (0:03:31) ========================
+======================== 53 passed ========================
 ```
 
 ---
@@ -214,6 +195,7 @@ uv run pytest tests/ -v                                       # full suite
 uv run pytest tests/ -v -m "not e2e"                         # Tier 1 only (fast)
 uv run pytest tests/test_orchestrator.py -v -m "not e2e"     # Orchestrator Tier 1 only
 uv run pytest tests/test_orchestrator.py -v -m e2e            # Orchestrator Tier 2 e2e only
+uv run pytest tests/test_reviewer_agent.py -v -m e2e          # Reviewer Tier 2 e2e only
 ```
 
 ### Pipeline
@@ -240,6 +222,6 @@ uv run basedpyright llm/ agents/ agent_base.py orchestrator.py
 
 ## Next Phase
 
-**Phase 5 — Reviewer Agent + retry loop**
+**Phase 6 — Repo Reader Agent + Scaffold Agent**
 
-Replace `ReviewerAgent` stub with a real LLM-based reviewer that inspects the generated Playwright TypeScript script and returns structured feedback. Wire the retry loop in `Orchestrator` to call `CoderAgent` again with the reviewer's feedback when verdict is `FAIL`.
+Replace `RepoReaderAgent` stub (reads an existing test repo structure and returns file tree + existing test patterns) and `ScaffoldAgent` stub (creates a new Playwright TypeScript project scaffold) with real LLM-based implementations. Wire results into Orchestrator Flow A and Flow B respectively.

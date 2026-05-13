@@ -1,4 +1,4 @@
-"""Phase 4 — Orchestrator tests.
+"""Phase 4 / Phase 5 — Orchestrator tests.
 
 Tier 1: unit tests (hardcoded fixtures, no API or browser calls).
 Tier 2: e2e integration tests (live API + live Playwright, marked with @pytest.mark.e2e).
@@ -10,6 +10,19 @@ from unittest.mock import MagicMock
 import pytest
 
 from orchestrator import MAX_RETRIES, Orchestrator
+
+BROKEN_SCRIPT = """\
+import { test } from '@playwright/test';
+
+test('Login test', async ({ page }) => {
+  await page.goto('https://example.com/login');
+  await page.waitForTimeout(3000);
+  await page.locator('.username-field').fill('admin');
+  await page.locator('.password-field').fill('password');
+  await page.locator('.submit-btn').click();
+  // No assertions at all
+});
+"""
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -81,8 +94,11 @@ def _make_orchestrator_with_stubs(
     orch._run_browser = MagicMock(return_value=browser_out)  # type: ignore[method-assign]
     orch._coder.run = MagicMock(return_value=coder_out)  # type: ignore[method-assign]
 
+    _default_pass = {"verdict": "PASS", "issues": [], "suggestions": []}
     if reviewer_side_effects is not None:
         orch._reviewer.run = MagicMock(side_effect=reviewer_side_effects)  # type: ignore[method-assign]
+    else:
+        orch._reviewer.run = MagicMock(return_value=_default_pass)  # type: ignore[method-assign]
 
     return orch
 
@@ -208,15 +224,29 @@ def test_orchestrator_retry_hook_respects_max_retries(
     assert "script" in result
 
 
-def test_reviewer_stub_returns_pass_verdict() -> None:
+def test_reviewer_returns_verdict_dict() -> None:
+    import json
+
     from agents.reviewer_agent import ReviewerAgent
+    from llm.base import LLMResponse
 
     llm = MagicMock()
+    llm.complete.return_value = LLMResponse(
+        content=json.dumps({"verdict": "PASS", "issues": [], "suggestions": []}),
+        model="mock",
+        input_tokens=10,
+        output_tokens=10,
+    )
     reviewer = ReviewerAgent(llm)
-    result = reviewer.run({"script": "some script"})
+    result = reviewer.run(
+        {
+            "script": "import { test, expect } from '@playwright/test';",
+            "analyst_output": {"title": "TC-001", "steps": [], "assertions": [], "test_data": {}},
+        }
+    )
     assert result["verdict"] == "PASS"
     assert result["issues"] == []
-    assert result["suggestions"] == []
+    assert isinstance(result["suggestions"], list)
 
 
 def test_repo_reader_stub_returns_dict() -> None:
@@ -244,6 +274,117 @@ def test_git_stub_returns_dict() -> None:
     agent = GitAgent(llm)
     result = agent.run({"script": "some script"})
     assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 — Phase 5 additions (retry loop wiring)
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_passes_feedback_to_coder_on_fail(
+    hardcoded_analyst_output: dict[str, Any],
+    hardcoded_browser_output: dict[str, Any],
+    hardcoded_coder_output: dict[str, Any],
+) -> None:
+    """Reviewer: FAIL on attempt 1, PASS on attempt 2 — CoderAgent called twice; second call includes reviewer_feedback."""
+    reviewer_responses = [
+        {"verdict": "FAIL", "issues": ["missing assertion"], "suggestions": ["add expect()"]},
+        {"verdict": "PASS", "issues": [], "suggestions": []},
+    ]
+    orch = _make_orchestrator_with_stubs(
+        hardcoded_analyst_output,
+        hardcoded_browser_output,
+        hardcoded_coder_output,
+        reviewer_side_effects=reviewer_responses,
+    )
+    orch.run(
+        {
+            "test_case": "dummy",
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": None,
+        }
+    )
+    assert orch._coder.run.call_count == 2  # type: ignore[union-attr]
+    second_call_input = orch._coder.run.call_args_list[1][0][0]  # type: ignore[union-attr]
+    assert "reviewer_feedback" in second_call_input
+
+
+def test_orchestrator_retries_up_to_max_retries(
+    hardcoded_analyst_output: dict[str, Any],
+    hardcoded_browser_output: dict[str, Any],
+    hardcoded_coder_output: dict[str, Any],
+) -> None:
+    """Reviewer always FAIL — CoderAgent called exactly MAX_RETRIES times."""
+    reviewer_responses = [{"verdict": "FAIL", "issues": ["always bad"], "suggestions": []}] * (
+        MAX_RETRIES + 5
+    )
+    orch = _make_orchestrator_with_stubs(
+        hardcoded_analyst_output,
+        hardcoded_browser_output,
+        hardcoded_coder_output,
+        reviewer_side_effects=reviewer_responses,
+    )
+    result = orch.run(
+        {
+            "test_case": "dummy",
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": None,
+        }
+    )
+    assert orch._coder.run.call_count == MAX_RETRIES  # type: ignore[union-attr]
+    assert result["retries"] == MAX_RETRIES - 1
+
+
+def test_orchestrator_returns_last_fail_after_max_retries(
+    hardcoded_analyst_output: dict[str, Any],
+    hardcoded_browser_output: dict[str, Any],
+    hardcoded_coder_output: dict[str, Any],
+) -> None:
+    """After exhausting retries, result dict has reviewer_verdict with FAIL."""
+    reviewer_responses = [{"verdict": "FAIL", "issues": ["bad"], "suggestions": []}] * (
+        MAX_RETRIES + 5
+    )
+    orch = _make_orchestrator_with_stubs(
+        hardcoded_analyst_output,
+        hardcoded_browser_output,
+        hardcoded_coder_output,
+        reviewer_side_effects=reviewer_responses,
+    )
+    result = orch.run(
+        {
+            "test_case": "dummy",
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": None,
+        }
+    )
+    assert result["reviewer_verdict"]["verdict"] == "FAIL"
+
+
+def test_orchestrator_stops_retrying_on_pass(
+    hardcoded_analyst_output: dict[str, Any],
+    hardcoded_browser_output: dict[str, Any],
+    hardcoded_coder_output: dict[str, Any],
+) -> None:
+    """Reviewer: FAIL, FAIL, PASS — loop stops after 3rd attempt; retries == 2."""
+    reviewer_responses = [
+        {"verdict": "FAIL", "issues": ["issue 1"], "suggestions": []},
+        {"verdict": "FAIL", "issues": ["issue 2"], "suggestions": []},
+        {"verdict": "PASS", "issues": [], "suggestions": []},
+    ]
+    orch = _make_orchestrator_with_stubs(
+        hardcoded_analyst_output,
+        hardcoded_browser_output,
+        hardcoded_coder_output,
+        reviewer_side_effects=reviewer_responses,
+    )
+    result = orch.run(
+        {
+            "test_case": "dummy",
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": None,
+        }
+    )
+    assert result["retries"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -316,5 +457,38 @@ def test_orchestrator_full_flow_a_todomvc() -> None:
         }
     )
     assert result["flow"] == "A"
+    assert isinstance(result["script"], str)
+    assert len(result["script"]) > 0
+
+
+@pytest.mark.e2e
+def test_orchestrator_e2e_retry_loop_forced_fail() -> None:
+    """Force coder to return a broken script on first call; retry loop must resolve to PASS."""
+    from llm.anthropic_provider import AnthropicProvider
+
+    llm = AnthropicProvider()
+    orch = Orchestrator(llm=llm)
+
+    call_count = 0
+    real_coder_run = orch._coder.run
+
+    def patched_coder_run(input_dict: dict[str, Any]) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {"script": BROKEN_SCRIPT}
+        return real_coder_run(input_dict)  # type: ignore[return-value]
+
+    orch._coder.run = patched_coder_run  # type: ignore[method-assign]
+
+    result = orch.run(
+        {
+            "test_case": ADD_TODO_TEST_CASE,
+            "staging_url": "https://demo.playwright.dev/todomvc",
+            "repo_url": None,
+        }
+    )
+    assert result["retries"] >= 1
+    assert result["reviewer_verdict"]["verdict"] == "PASS"
     assert isinstance(result["script"], str)
     assert len(result["script"]) > 0
